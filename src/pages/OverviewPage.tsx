@@ -23,6 +23,16 @@ function profileLabel(p: Profile) {
   return p === "harley" ? "Harley" : "Giovanni";
 }
 
+function isoDate(v?: string | null) {
+  if (!v) return "";
+  return String(v).slice(0, 10);
+}
+
+function inRange(dayISO: string, start: string, end: string) {
+  // YYYY-MM-DD compara lexicograficamente
+  return dayISO >= start && dayISO <= end;
+}
+
 export default function OverviewPage() {
   const today = new Date();
   const [range, setRange] = useState(() => ({
@@ -69,24 +79,41 @@ export default function OverviewPage() {
     setLoading(true);
     setErr(null);
     try {
-      const [meta, harleySales, gioSales] = await Promise.all([
+      // IMPORTANT:
+      // Para "receita por vendas", precisamos considerar vendas cujo deal_date cai no período,
+      // mesmo que o lead tenha sido criado em outro mês.
+      // Então buscamos meeting leads até o fim do range, com um start bem antigo.
+      const LEADS_START = "2000-01-01";
+
+      const [meta, harleyLeads, gioLeads] = await Promise.all([
         listMetaAds(range.start, range.end),
-        listMeetingLeads("harley", range.start, range.end),
-        listMeetingLeads("giovanni", range.start, range.end),
+        listMeetingLeads("harley", LEADS_START, range.end),
+        listMeetingLeads("giovanni", LEADS_START, range.end),
       ]);
 
       setMetaRows(meta);
 
-      // ✅ RECEITA AGORA VEM DE deal_value (só quando status = "venda")
+      // ✅ RECEITA (VENDAS) = soma de deal_value
+      // ✅ Só conta quando status="venda" E deal_date dentro do range
       const revHarley =
-        harleySales
-          .filter((r) => r.status === "venda")
-          .reduce((sum, r: any) => sum + Number(r.deal_value || 0), 0) || 0;
+        (harleyLeads ?? [])
+          .filter((r: any) => String(r.status) === "venda")
+          .filter((r: any) => {
+            const d = isoDate(r.deal_date);
+            if (!d) return false;
+            return inRange(d, range.start, range.end);
+          })
+          .reduce((sum: number, r: any) => sum + Number(r.deal_value || 0), 0) || 0;
 
       const revGio =
-        gioSales
-          .filter((r) => r.status === "venda")
-          .reduce((sum, r: any) => sum + Number(r.deal_value || 0), 0) || 0;
+        (gioLeads ?? [])
+          .filter((r: any) => String(r.status) === "venda")
+          .filter((r: any) => {
+            const d = isoDate(r.deal_date);
+            if (!d) return false;
+            return inRange(d, range.start, range.end);
+          })
+          .reduce((sum: number, r: any) => sum + Number(r.deal_value || 0), 0) || 0;
 
       setSalesRevenue({ harley: revHarley, giovanni: revGio });
     } catch (e: any) {
@@ -194,9 +221,7 @@ export default function OverviewPage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="text-lg font-semibold">Visão geral</div>
-          <div className="text-sm text-slate-400">
-            Seletor de período controla os indicadores desta página.
-          </div>
+          <div className="text-sm text-slate-400">Seletor de período controla os indicadores desta página.</div>
         </div>
 
         <div className="flex flex-wrap items-end gap-3">
@@ -206,9 +231,7 @@ export default function OverviewPage() {
       </div>
 
       {err ? (
-        <div className="rounded-3xl border border-red-900/50 bg-red-950/30 px-5 py-4 text-sm text-red-200">
-          {err}
-        </div>
+        <div className="rounded-3xl border border-red-900/50 bg-red-950/30 px-5 py-4 text-sm text-red-200">{err}</div>
       ) : null}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -233,26 +256,35 @@ export default function OverviewPage() {
         ))}
       </div>
 
-      <Card
-        title="Campanhas registradas (Meta Ads)"
-        subtitle="Você pode editar retroativamente — dados são semanais/por campanha."
-      >
+      <Card title="Campanhas registradas (Meta Ads)" subtitle="Você pode editar retroativamente — dados são semanais/por campanha.">
         <Table
           columns={[
             { key: "profile", header: "Perfil", render: (r) => <Pill>{profileLabel(r.profile)}</Pill> },
             { key: "start_date", header: "Início" },
             { key: "end_date", header: "Fim" },
             { key: "spend", header: "Investimento", render: (r) => brl(Number(r.spend || 0)) },
-            { key: "impressions", header: "Impressões", render: (r) => Number(r.impressions || 0).toLocaleString("pt-BR") },
+            {
+              key: "impressions",
+              header: "Impressões",
+              render: (r) => Number(r.impressions || 0).toLocaleString("pt-BR"),
+            },
             { key: "clicks", header: "Cliques", render: (r) => Number(r.clicks || 0).toLocaleString("pt-BR") },
-            { key: "followers", header: "Seguidores", render: (r) => Number(r.followers || 0).toLocaleString("pt-BR") },
+            {
+              key: "followers",
+              header: "Seguidores",
+              render: (r) => Number(r.followers || 0).toLocaleString("pt-BR"),
+            },
           ]}
           rows={metaRows}
           rowKey={(r) => r.id}
           actions={(r) => (
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => openEdit(r)}>Editar</Button>
-              <Button variant="ghost" onClick={() => remove(r.id)}>Excluir</Button>
+              <Button variant="outline" onClick={() => openEdit(r)}>
+                Editar
+              </Button>
+              <Button variant="ghost" onClick={() => remove(r.id)}>
+                Excluir
+              </Button>
             </div>
           )}
         />
@@ -271,10 +303,7 @@ export default function OverviewPage() {
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <div>
               <Label>Perfil</Label>
-              <Select
-                value={form.profile}
-                onChange={(e) => setForm((s) => ({ ...s, profile: e.target.value as Profile }))}
-              >
+              <Select value={form.profile} onChange={(e) => setForm((s) => ({ ...s, profile: e.target.value as Profile }))}>
                 <option value="harley">Harley</option>
                 <option value="giovanni">Giovanni</option>
               </Select>
@@ -284,61 +313,32 @@ export default function OverviewPage() {
 
             <div>
               <Label>Início da campanha</Label>
-              <Input
-                type="date"
-                value={form.start_date}
-                onChange={(e) => setForm((s) => ({ ...s, start_date: e.target.value }))}
-              />
+              <Input type="date" value={form.start_date} onChange={(e) => setForm((s) => ({ ...s, start_date: e.target.value }))} />
             </div>
 
             <div>
               <Label>Fim da campanha</Label>
-              <Input
-                type="date"
-                value={form.end_date}
-                onChange={(e) => setForm((s) => ({ ...s, end_date: e.target.value }))}
-              />
+              <Input type="date" value={form.end_date} onChange={(e) => setForm((s) => ({ ...s, end_date: e.target.value }))} />
             </div>
 
             <div>
               <Label>Impressões</Label>
-              <Input
-                type="number"
-                min={0}
-                value={form.impressions}
-                onChange={(e) => setForm((s) => ({ ...s, impressions: Number(e.target.value || 0) }))}
-              />
+              <Input type="number" min={0} value={form.impressions} onChange={(e) => setForm((s) => ({ ...s, impressions: Number(e.target.value || 0) }))} />
             </div>
 
             <div>
               <Label>Cliques</Label>
-              <Input
-                type="number"
-                min={0}
-                value={form.clicks}
-                onChange={(e) => setForm((s) => ({ ...s, clicks: Number(e.target.value || 0) }))}
-              />
+              <Input type="number" min={0} value={form.clicks} onChange={(e) => setForm((s) => ({ ...s, clicks: Number(e.target.value || 0) }))} />
             </div>
 
             <div>
               <Label>Seguidores</Label>
-              <Input
-                type="number"
-                min={0}
-                value={form.followers}
-                onChange={(e) => setForm((s) => ({ ...s, followers: Number(e.target.value || 0) }))}
-              />
+              <Input type="number" min={0} value={form.followers} onChange={(e) => setForm((s) => ({ ...s, followers: Number(e.target.value || 0) }))} />
             </div>
 
             <div>
               <Label>Investimento (R$)</Label>
-              <Input
-                type="number"
-                min={0}
-                step="0.01"
-                value={form.spend}
-                onChange={(e) => setForm((s) => ({ ...s, spend: Number(e.target.value || 0) }))}
-              />
+              <Input type="number" min={0} step="0.01" value={form.spend} onChange={(e) => setForm((s) => ({ ...s, spend: Number(e.target.value || 0) }))} />
             </div>
           </div>
 
