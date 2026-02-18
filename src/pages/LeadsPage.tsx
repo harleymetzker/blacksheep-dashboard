@@ -59,13 +59,24 @@ function convRate(from: number, to: number) {
 }
 
 function lastNDays(rows: DailyFunnel[], n: number) {
-  // rows chegam ordenadas desc por day
   return rows.slice(0, n);
 }
 
-function formatBRL(v: any) {
-  const n = Number(v || 0);
-  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+function isoDate(v?: string | null) {
+  if (!v) return "";
+  return String(v).slice(0, 10);
+}
+
+function inRange(dayISO: string, start: string, end: string) {
+  return !!dayISO && dayISO >= start && dayISO <= end;
+}
+
+function leadDateFallback(row: any) {
+  return isoDate(row?.lead_date) || isoDate(row?.created_at) || todayISO();
+}
+
+function maxISO(a: string, b: string) {
+  return a >= b ? a : b;
 }
 
 export default function LeadsPage() {
@@ -81,8 +92,9 @@ export default function LeadsPage() {
   const [dailyHarley, setDailyHarley] = useState<DailyFunnel[]>([]);
   const [dailyGio, setDailyGio] = useState<DailyFunnel[]>([]);
 
-  const [meetingHarley, setMeetingHarley] = useState<MeetingLead[]>([]);
-  const [meetingGio, setMeetingGio] = useState<MeetingLead[]>([]);
+  // IMPORTANT: vamos buscar amplo e filtrar no front por lead_date
+  const [meetingHarleyAll, setMeetingHarleyAll] = useState<MeetingLead[]>([]);
+  const [meetingGioAll, setMeetingGioAll] = useState<MeetingLead[]>([]);
 
   // Modal: Daily Funnel (per profile)
   const [openDaily, setOpenDaily] = useState(false);
@@ -101,16 +113,15 @@ export default function LeadsPage() {
   const [openLead, setOpenLead] = useState(false);
   const [leadProfile, setLeadProfile] = useState<Profile>("harley");
   const [editingLeadId, setEditingLeadId] = useState<string | null>(null);
-
   const [leadForm, setLeadForm] = useState({
-    lead_date: todayISO(), // ✅ retroativo (data do lead)
+    lead_date: todayISO(),
     name: "",
     contact: "",
     instagram: "",
     avg_revenue: 0,
     status: "marcou" as MeetingLead["status"],
-    deal_value: null as number | null, // ✅ valor real da venda
-    deal_date: null as string | null, // ✅ data real do fechamento
+    deal_value: null as number | null,
+    deal_date: null as string | null,
     notes: "",
   });
 
@@ -146,18 +157,23 @@ export default function LeadsPage() {
   async function refresh() {
     setLoading(true);
     setErr(null);
+
     try {
-      const [dh, dg, mh, mg] = await Promise.all([
+      const queryEnd = maxISO(todayISO(), range.end);
+
+      const [dh, dg, mhAll, mgAll] = await Promise.all([
         listDailyFunnel("harley", range.start, range.end),
         listDailyFunnel("giovanni", range.start, range.end),
-        listMeetingLeads("harley", range.start, range.end),
-        listMeetingLeads("giovanni", range.start, range.end),
+
+        // ✅ busca ampla (senão lead com lead_date em janeiro mas created_at em fevereiro some)
+        listMeetingLeads("harley", "2000-01-01", queryEnd),
+        listMeetingLeads("giovanni", "2000-01-01", queryEnd),
       ]);
 
-      setDailyHarley(dh);
-      setDailyGio(dg);
-      setMeetingHarley(mh);
-      setMeetingGio(mg);
+      setDailyHarley(dh ?? []);
+      setDailyGio(dg ?? []);
+      setMeetingHarleyAll(mhAll ?? []);
+      setMeetingGioAll(mgAll ?? []);
     } catch (e: any) {
       setErr(e?.message ?? "Erro ao carregar dados.");
     } finally {
@@ -169,6 +185,15 @@ export default function LeadsPage() {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range.start, range.end]);
+
+  // ✅ Filtra por lead_date (fallback created_at) no período selecionado
+  const meetingHarley = useMemo(() => {
+    return (meetingHarleyAll ?? []).filter((r: any) => inRange(leadDateFallback(r), range.start, range.end));
+  }, [meetingHarleyAll, range.start, range.end]);
+
+  const meetingGio = useMemo(() => {
+    return (meetingGioAll ?? []).filter((r: any) => inRange(leadDateFallback(r), range.start, range.end));
+  }, [meetingGioAll, range.start, range.end]);
 
   const totalsHarley = useMemo(() => sumTotals(dailyHarley), [dailyHarley]);
   const totalsGio = useMemo(() => sumTotals(dailyGio), [dailyGio]);
@@ -291,6 +316,11 @@ export default function LeadsPage() {
         return;
       }
 
+      if (!payload.lead_date) {
+        setErr("Data do lead é obrigatória.");
+        return;
+      }
+
       await upsertMeetingLead(payload);
       setOpenLead(false);
       await refresh();
@@ -397,13 +427,25 @@ export default function LeadsPage() {
         >
           <Table
             columns={[
-              { key: "lead_date", header: "Data do lead", render: (r) => (r.lead_date ? String(r.lead_date).slice(0, 10) : "") },
+              { key: "lead_date", header: "Data do lead", render: (r) => leadDateFallback(r) },
               { key: "name", header: "Nome" },
               { key: "contact", header: "Contato" },
               { key: "instagram", header: "@ Instagram" },
-              { key: "avg_revenue", header: "Faturamento médio", render: (r) => formatBRL(r.avg_revenue) },
+              {
+                key: "avg_revenue",
+                header: "Faturamento médio",
+                render: (r) =>
+                  Number(r.avg_revenue || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }),
+              },
               { key: "status", header: "Status", render: (r) => <Pill>{String(r.status)}</Pill> },
-              { key: "deal_value", header: "Venda (R$)", render: (r) => (r.status === "venda" ? formatBRL((r as any).deal_value) : "") },
+              {
+                key: "deal_value",
+                header: "Venda (R$)",
+                render: (r: any) =>
+                  String(r.status) === "venda"
+                    ? Number(r.deal_value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+                    : "",
+              },
               { key: "notes", header: "Obs." },
             ]}
             rows={meetingRows}
@@ -425,9 +467,7 @@ export default function LeadsPage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="text-lg font-semibold">Leads</div>
-          <div className="text-sm text-slate-400">
-            Seletor de datas controla o desempenho do time no período selecionado.
-          </div>
+          <div className="text-sm text-slate-400">Seletor de datas controla o desempenho do time no período selecionado.</div>
         </div>
 
         <DateRange start={range.start} end={range.end} onChange={setRange} />
@@ -463,9 +503,7 @@ export default function LeadsPage() {
       <Modal
         open={openDaily}
         title={
-          editingDailyId
-            ? `Editar registro diário — ${profileLabel(dailyProfile)}`
-            : `Novo registro diário — ${profileLabel(dailyProfile)}`
+          editingDailyId ? `Editar registro diário — ${profileLabel(dailyProfile)}` : `Novo registro diário — ${profileLabel(dailyProfile)}`
         }
         subtitle="Preencha os números do dia. Esses dados somam nos cards do topo."
         onClose={() => setOpenDaily(false)}
@@ -474,11 +512,7 @@ export default function LeadsPage() {
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <div>
               <Label>Data</Label>
-              <Input
-                type="date"
-                value={dailyForm.day}
-                onChange={(e) => setDailyForm((s) => ({ ...s, day: e.target.value }))}
-              />
+              <Input type="date" value={dailyForm.day} onChange={(e) => setDailyForm((s) => ({ ...s, day: e.target.value }))} />
             </div>
 
             <div className="hidden md:block" />
@@ -490,21 +524,14 @@ export default function LeadsPage() {
                   type="number"
                   min={0}
                   value={(dailyForm as any)[s]}
-                  onChange={(e) =>
-                    setDailyForm((prev) => ({
-                      ...prev,
-                      [s]: Number(e.target.value || 0),
-                    }))
-                  }
+                  onChange={(e) => setDailyForm((prev) => ({ ...prev, [s]: Number(e.target.value || 0) }))}
                 />
               </div>
             ))}
           </div>
 
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setOpenDaily(false)}>
-              Cancelar
-            </Button>
+            <Button variant="outline" onClick={() => setOpenDaily(false)}>Cancelar</Button>
             <Button onClick={saveDaily}>{editingDailyId ? "Salvar alterações" : "Salvar registro"}</Button>
           </div>
         </div>
@@ -513,11 +540,7 @@ export default function LeadsPage() {
       {/* Modal: Lead */}
       <Modal
         open={openLead}
-        title={
-          editingLeadId
-            ? `Editar lead — ${profileLabel(leadProfile)}`
-            : `Novo lead — ${profileLabel(leadProfile)}`
-        }
+        title={editingLeadId ? `Editar lead — ${profileLabel(leadProfile)}` : `Novo lead — ${profileLabel(leadProfile)}`}
         subtitle="Use para leads que marcaram reunião. Depois atualize status."
         onClose={() => setOpenLead(false)}
       >
@@ -525,11 +548,7 @@ export default function LeadsPage() {
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <div>
               <Label>Data do lead</Label>
-              <Input
-                type="date"
-                value={leadForm.lead_date}
-                onChange={(e) => setLeadForm((s) => ({ ...s, lead_date: e.target.value }))}
-              />
+              <Input type="date" value={leadForm.lead_date} onChange={(e) => setLeadForm((s) => ({ ...s, lead_date: e.target.value }))} />
             </div>
 
             <div className="hidden md:block" />
@@ -541,18 +560,12 @@ export default function LeadsPage() {
 
             <div>
               <Label>Contato do lead</Label>
-              <Input
-                value={leadForm.contact}
-                onChange={(e) => setLeadForm((s) => ({ ...s, contact: e.target.value }))}
-              />
+              <Input value={leadForm.contact} onChange={(e) => setLeadForm((s) => ({ ...s, contact: e.target.value }))} />
             </div>
 
             <div>
               <Label>@ do Instagram</Label>
-              <Input
-                value={leadForm.instagram}
-                onChange={(e) => setLeadForm((s) => ({ ...s, instagram: e.target.value }))}
-              />
+              <Input value={leadForm.instagram} onChange={(e) => setLeadForm((s) => ({ ...s, instagram: e.target.value }))} />
             </div>
 
             <div>
@@ -614,17 +627,12 @@ export default function LeadsPage() {
 
             <div className="md:col-span-2">
               <Label>Observações</Label>
-              <Input
-                value={leadForm.notes}
-                onChange={(e) => setLeadForm((s) => ({ ...s, notes: e.target.value }))}
-              />
+              <Input value={leadForm.notes} onChange={(e) => setLeadForm((s) => ({ ...s, notes: e.target.value }))} />
             </div>
           </div>
 
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setOpenLead(false)}>
-              Cancelar
-            </Button>
+            <Button variant="outline" onClick={() => setOpenLead(false)}>Cancelar</Button>
             <Button onClick={saveLead}>{editingLeadId ? "Salvar alterações" : "Salvar lead"}</Button>
           </div>
         </div>
