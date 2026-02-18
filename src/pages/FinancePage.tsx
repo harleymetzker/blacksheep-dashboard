@@ -54,19 +54,19 @@ function parseMoneyInput(raw: string): number {
   const hasComma = cleaned.includes(",");
   const hasDot = cleaned.includes(".");
 
-  // 1) "1.234,56" => "1234.56"
+  // "1.234,56" => "1234.56"
   if (hasComma && hasDot) {
     const normalized = cleaned.replace(/\./g, "").replace(",", ".");
     return safeNumber(normalized);
   }
 
-  // 2) "1234,56" => "1234.56"
+  // "1234,56" => "1234.56"
   if (hasComma && !hasDot) {
     const normalized = cleaned.replace(",", ".");
     return safeNumber(normalized);
   }
 
-  // 3) "1234.56" ou "1234"
+  // "1234.56" ou "1234"
   return safeNumber(cleaned);
 }
 
@@ -116,11 +116,11 @@ export default function FinancePage() {
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // saldo inicial vindo do supabase (último saldo antes do período)
+  // Saldo inicial (automático ou override do período)
   const [balanceDay, setBalanceDay] = useState<string>("");
   const [saldoInicial, setSaldoInicial] = useState<number>(0);
 
-  // input para registrar saldo (salva no supabase)
+  // input para registrar/corrigir saldo inicial do período
   const [bankBalanceInput, setBankBalanceInput] = useState<string>("");
 
   // modal
@@ -149,11 +149,25 @@ export default function FinancePage() {
     }
   }
 
+  /**
+   * Saldo inicial do período:
+   * 1) se existir saldo com day == range.start, ele tem prioridade (override editável)
+   * 2) senão, usa o último saldo antes do período
+   */
   async function refreshBalances() {
     setError(null);
     try {
       const data = await listBankBalances();
 
+      // 1) prioridade: saldo EXATO do início do período
+      const exact = (data ?? []).find((b: any) => String(b.day).slice(0, 10) === range.start);
+      if (exact) {
+        setBalanceDay(range.start);
+        setSaldoInicial(safeNumber(exact.balance));
+        return;
+      }
+
+      // 2) fallback: último saldo antes do período
       const start = new Date(range.start);
       const prior = (data ?? []).find((b: any) => new Date(b.day) < start);
 
@@ -355,7 +369,8 @@ export default function FinancePage() {
       <Card title="Caixa (Conta bancária)">
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <div className="space-y-2">
-            <Label>Registrar saldo inicial do período</Label>
+            <Label>Saldo inicial do período (editável)</Label>
+
             <Input
               type="text"
               value={bankBalanceInput}
@@ -366,11 +381,12 @@ export default function FinancePage() {
             <div className="flex items-center gap-2">
               <Button
                 onClick={async () => {
-                  const val = parseMoneyInput(bankBalanceInput);
+                  // se você não digitou nada, ele permite salvar o valor atual exibido
+                  const val = parseMoneyInput(bankBalanceInput || String(saldoInicial));
                   await upsertBankBalance({
                     day: range.start,
                     balance: val,
-                    notes: "Saldo inicial do período",
+                    notes: "Saldo inicial (override do período)",
                   });
                   setBankBalanceInput("");
                   await refreshBalances();
@@ -379,9 +395,13 @@ export default function FinancePage() {
                 Salvar saldo inicial
               </Button>
 
-              {balanceDay ? (
+              {balanceDay === range.start ? (
                 <div className="text-xs text-slate-400">
-                  Saldo inicial puxado de: <span className="font-semibold">{balanceDay}</span>
+                  Usando saldo do período (editável): <span className="font-semibold">{range.start}</span>
+                </div>
+              ) : balanceDay ? (
+                <div className="text-xs text-slate-400">
+                  Saldo automático (último antes do período): <span className="font-semibold">{balanceDay}</span>
                 </div>
               ) : (
                 <div className="text-xs text-slate-400">Nenhum saldo anterior encontrado.</div>
@@ -389,7 +409,7 @@ export default function FinancePage() {
             </div>
 
             <div className="text-xs text-slate-400">
-              Regra: o saldo inicial do período é o último saldo registrado antes de {range.start}.
+              Regra: se existir saldo em <b>{range.start}</b>, ele tem prioridade. Senão, usa o último saldo anterior.
             </div>
           </div>
 
@@ -521,12 +541,10 @@ export default function FinancePage() {
             onChange={(e: any) => {
               const v = typeof e === "string" ? e : e?.target?.value;
               const kind = v as "receita" | "despesa" | "retirada";
-
               setForm({
                 ...form,
                 kind,
                 expense_type: kind === "despesa" ? "fixa" : null,
-                category: kind === "despesa" ? form.category : form.category,
               });
             }}
           >
