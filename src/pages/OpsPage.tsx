@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Button, Card, Input, Label, Modal, Select, Table, Pill, Stat } from "../components/ui";
-import { uid, todayISO } from "../lib/utils";
+import { Button, Card, Input, Label, Modal, Select, Pill, Stat } from "../components/ui";
+import { uid } from "../lib/utils";
 import { deleteOps, listOps, upsertOps } from "../lib/db";
 
 type OpsStatus = "pausado" | "em_andamento" | "feito" | "arquivado";
@@ -25,6 +25,7 @@ export default function OpsPage() {
 
   const [form, setForm] = useState({
     title: "",
+    description: "",
     owner: "",
     due: "" as string | null,
     status: "pausado" as OpsStatus,
@@ -65,6 +66,7 @@ export default function OpsPage() {
     setEditingId(null);
     setForm({
       title: "",
+      description: "",
       owner: "",
       due: null,
       status: "pausado",
@@ -76,6 +78,7 @@ export default function OpsPage() {
     setEditingId(r.id);
     setForm({
       title: r.title ?? "",
+      description: r.description ?? "",
       owner: r.owner ?? "",
       due: r.due ?? null,
       status: (r.status ?? "pausado") as OpsStatus,
@@ -89,6 +92,7 @@ export default function OpsPage() {
       const payload = {
         id: editingId ?? uid(),
         title: form.title.trim(),
+        description: form.description.trim(),
         owner: form.owner.trim(),
         due: form.due ? form.due : null,
         status: form.status,
@@ -118,7 +122,6 @@ export default function OpsPage() {
     }
   }
 
-  // Kanban columns
   const cols: { key: OpsStatus; title: string }[] = [
     { key: "pausado", title: "Pausado" },
     { key: "em_andamento", title: "Em andamento" },
@@ -137,7 +140,6 @@ export default function OpsPage() {
       const s = (r.status ?? "pausado") as OpsStatus;
       (g[s] ?? g.pausado).push(r);
     }
-    // opcional: ordenar por prazo (due), depois created_at
     for (const k of Object.keys(g) as OpsStatus[]) {
       g[k] = g[k].slice().sort((a, b) => {
         const ad = a.due ?? "9999-12-31";
@@ -154,9 +156,7 @@ export default function OpsPage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="text-lg font-semibold">Operação</div>
-          <div className="text-sm text-slate-400">
-            Kanban simples para não perder execução.
-          </div>
+          <div className="text-sm text-slate-400">Kanban simples para execução.</div>
         </div>
 
         <div className="flex items-end gap-3">
@@ -186,24 +186,24 @@ export default function OpsPage() {
                 <div className="text-sm text-slate-400">Sem tarefas.</div>
               ) : (
                 grouped[c.key].map((t) => (
-                  <div
-                    key={t.id}
-                    className="rounded-3xl border border-slate-800 bg-slate-950/20 p-4"
-                  >
+                  <div key={t.id} className="rounded-3xl border border-slate-800 bg-slate-950/20 p-4">
                     <div className="flex items-start justify-between gap-3">
-                      <div>
+                      <div className="min-w-0">
                         <div className="font-semibold">{t.title}</div>
-                        <div className="mt-1 text-xs text-slate-400">
+                        {t.description ? (
+                          <div className="mt-1 text-sm text-slate-300 whitespace-pre-wrap break-words">
+                            {t.description}
+                          </div>
+                        ) : (
+                          <div className="mt-1 text-sm text-slate-500">Sem descrição.</div>
+                        )}
+                        <div className="mt-2 text-xs text-slate-400">
                           Dono: {t.owner || "—"} • Prazo: {t.due || "—"}
                         </div>
                       </div>
-                      <div className="flex gap-2">
-                        <Button variant="outline" onClick={() => openEdit(t)}>
-                          Editar
-                        </Button>
-                        <Button variant="ghost" onClick={() => remove(t.id)}>
-                          Excluir
-                        </Button>
+                      <div className="flex shrink-0 gap-2">
+                        <Button variant="outline" onClick={() => openEdit(t)}>Editar</Button>
+                        <Button variant="ghost" onClick={() => remove(t.id)}>Excluir</Button>
                       </div>
                     </div>
                   </div>
@@ -217,13 +217,24 @@ export default function OpsPage() {
       <Modal
         open={open}
         title={editingId ? "Editar tarefa" : "Nova tarefa"}
-        subtitle="Texto livre para dono. Status conforme seu fluxo."
+        subtitle="Inclua descrição para o time saber exatamente o que fazer."
         onClose={() => setOpen(false)}
       >
         <div className="space-y-3">
           <div>
             <Label>Título</Label>
             <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+          </div>
+
+          <div>
+            <Label>Descrição (detalhes)</Label>
+            <textarea
+              value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+              className="w-full rounded-2xl border border-slate-700 bg-slate-950/40 px-3 py-2 text-sm text-slate-50 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500"
+              rows={5}
+              placeholder="Descreva exatamente o que precisa ser feito, contexto, links, critérios de pronto, etc."
+            />
           </div>
 
           <div>
@@ -254,9 +265,7 @@ export default function OpsPage() {
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => setOpen(false)}>
-              Cancelar
-            </Button>
+            <Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>
             <Button onClick={save}>{editingId ? "Salvar alterações" : "Salvar tarefa"}</Button>
           </div>
         </div>
