@@ -63,10 +63,9 @@ function lastNDays(rows: DailyFunnel[], n: number) {
   return rows.slice(0, n);
 }
 
-function isoDateFromCreatedAt(created_at?: string) {
-  if (!created_at) return todayISO();
-  // "2026-02-18T..." -> "2026-02-18"
-  return String(created_at).slice(0, 10);
+function formatBRL(v: any) {
+  const n = Number(v || 0);
+  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
 export default function LeadsPage() {
@@ -102,13 +101,16 @@ export default function LeadsPage() {
   const [openLead, setOpenLead] = useState(false);
   const [leadProfile, setLeadProfile] = useState<Profile>("harley");
   const [editingLeadId, setEditingLeadId] = useState<string | null>(null);
+
   const [leadForm, setLeadForm] = useState({
-    lead_date: todayISO(), // <-- NOVO (data retroativa)
+    lead_date: todayISO(), // ✅ retroativo (data do lead)
     name: "",
     contact: "",
     instagram: "",
     avg_revenue: 0,
     status: "marcou" as MeetingLead["status"],
+    deal_value: null as number | null, // ✅ valor real da venda
+    deal_date: null as string | null, // ✅ data real do fechamento
     notes: "",
   });
 
@@ -135,6 +137,8 @@ export default function LeadsPage() {
       instagram: "",
       avg_revenue: 0,
       status: "marcou",
+      deal_value: null,
+      deal_date: null,
       notes: "",
     });
   }
@@ -250,19 +254,18 @@ export default function LeadsPage() {
     setLeadProfile(profile);
     setEditingLeadId(row.id);
 
-    // lead_date é a data "retroativa".
-    // fallback p/ created_at caso ainda existam registros antigos sem lead_date
-    const leadDate = (row as any).lead_date || isoDateFromCreatedAt(row.created_at);
-
     setLeadForm({
-      lead_date: leadDate,
+      lead_date: (row as any).lead_date ?? (row.created_at ? String(row.created_at).slice(0, 10) : todayISO()),
       name: row.name ?? "",
       contact: row.contact ?? "",
       instagram: row.instagram ?? "",
       avg_revenue: Number(row.avg_revenue || 0),
       status: row.status,
+      deal_value: (row as any).deal_value ?? null,
+      deal_date: (row as any).deal_date ?? null,
       notes: row.notes ?? "",
     });
+
     setOpenLead(true);
   }
 
@@ -272,22 +275,19 @@ export default function LeadsPage() {
       const payload: Partial<MeetingLead> = {
         id: editingLeadId ?? uid(),
         profile: leadProfile,
-        lead_date: leadForm.lead_date, // <-- NOVO (retroativo)
+        lead_date: leadForm.lead_date,
         name: leadForm.name.trim(),
         contact: leadForm.contact.trim(),
         instagram: leadForm.instagram.trim(),
         avg_revenue: Number(leadForm.avg_revenue || 0),
         status: leadForm.status,
         notes: leadForm.notes.trim(),
+        deal_value: leadForm.status === "venda" ? Number(leadForm.deal_value || 0) : null,
+        deal_date: leadForm.status === "venda" ? (leadForm.deal_date ?? todayISO()) : null,
       };
 
       if (!payload.name) {
         setErr("Nome do lead é obrigatório.");
-        return;
-      }
-
-      if (!payload.lead_date) {
-        setErr("Data do lead é obrigatória.");
         return;
       }
 
@@ -392,30 +392,18 @@ export default function LeadsPage() {
 
         <Card
           title="Leads de reunião"
-          subtitle='Para preencher com contatos que marcaram reunião. Inclui "contato do lead", "@ do instagram" e "faturamento médio".'
+          subtitle='Para preencher com contatos que marcaram reunião. Inclui "data do lead" (retroativo), "contato do lead", "@ do instagram" e "faturamento médio".'
           right={<Button onClick={() => openLeadModal(profile)}>Adicionar lead</Button>}
         >
           <Table
             columns={[
-              {
-                key: "lead_date",
-                header: "Data",
-                render: (r) => String((r as any).lead_date || ""),
-              },
+              { key: "lead_date", header: "Data do lead", render: (r) => (r.lead_date ? String(r.lead_date).slice(0, 10) : "") },
               { key: "name", header: "Nome" },
               { key: "contact", header: "Contato" },
               { key: "instagram", header: "@ Instagram" },
-              {
-                key: "avg_revenue",
-                header: "Faturamento médio",
-                render: (r) =>
-                  Number(r.avg_revenue || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }),
-              },
-              {
-                key: "status",
-                header: "Status",
-                render: (r) => <Pill>{String(r.status)}</Pill>,
-              },
+              { key: "avg_revenue", header: "Faturamento médio", render: (r) => formatBRL(r.avg_revenue) },
+              { key: "status", header: "Status", render: (r) => <Pill>{String(r.status)}</Pill> },
+              { key: "deal_value", header: "Venda (R$)", render: (r) => (r.status === "venda" ? formatBRL((r as any).deal_value) : "") },
               { key: "notes", header: "Obs." },
             ]}
             rows={meetingRows}
@@ -523,127 +511,124 @@ export default function LeadsPage() {
       </Modal>
 
       {/* Modal: Lead */}
-<Modal
-  open={openLead}
-  title={editingLeadId ? `Editar lead — ${profileLabel(leadProfile)}` : `Novo lead — ${profileLabel(leadProfile)}`}
-  subtitle="Use para leads que marcaram reunião."
-  onClose={() => setOpenLead(false)}
->
-  <div className="space-y-4">
-    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+      <Modal
+        open={openLead}
+        title={
+          editingLeadId
+            ? `Editar lead — ${profileLabel(leadProfile)}`
+            : `Novo lead — ${profileLabel(leadProfile)}`
+        }
+        subtitle="Use para leads que marcaram reunião. Depois atualize status."
+        onClose={() => setOpenLead(false)}
+      >
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <Label>Data do lead</Label>
+              <Input
+                type="date"
+                value={leadForm.lead_date}
+                onChange={(e) => setLeadForm((s) => ({ ...s, lead_date: e.target.value }))}
+              />
+            </div>
 
-      <div>
-        <Label>Data do lead</Label>
-        <Input
-          type="date"
-          value={leadForm.lead_date}
-          onChange={(e) => setLeadForm((s) => ({ ...s, lead_date: e.target.value }))}
-        />
-      </div>
+            <div className="hidden md:block" />
 
-      <div className="md:col-span-2">
-        <Label>Nome</Label>
-        <Input
-          value={leadForm.name}
-          onChange={(e) => setLeadForm((s) => ({ ...s, name: e.target.value }))}
-        />
-      </div>
+            <div className="md:col-span-2">
+              <Label>Nome</Label>
+              <Input value={leadForm.name} onChange={(e) => setLeadForm((s) => ({ ...s, name: e.target.value }))} />
+            </div>
 
-      <div>
-        <Label>Contato do lead</Label>
-        <Input
-          value={leadForm.contact}
-          onChange={(e) => setLeadForm((s) => ({ ...s, contact: e.target.value }))}
-        />
-      </div>
+            <div>
+              <Label>Contato do lead</Label>
+              <Input
+                value={leadForm.contact}
+                onChange={(e) => setLeadForm((s) => ({ ...s, contact: e.target.value }))}
+              />
+            </div>
 
-      <div>
-        <Label>@ do Instagram</Label>
-        <Input
-          value={leadForm.instagram}
-          onChange={(e) => setLeadForm((s) => ({ ...s, instagram: e.target.value }))}
-        />
-      </div>
+            <div>
+              <Label>@ do Instagram</Label>
+              <Input
+                value={leadForm.instagram}
+                onChange={(e) => setLeadForm((s) => ({ ...s, instagram: e.target.value }))}
+              />
+            </div>
 
-      <div>
-        <Label>Faturamento médio (qualificação)</Label>
-        <Input
-          type="number"
-          step="0.01"
-          min={0}
-          value={leadForm.avg_revenue}
-          onChange={(e) =>
-            setLeadForm((s) => ({ ...s, avg_revenue: Number(e.target.value || 0) }))
-          }
-        />
-      </div>
+            <div>
+              <Label>Faturamento médio (do lead)</Label>
+              <Input
+                type="number"
+                step="0.01"
+                min={0}
+                value={leadForm.avg_revenue}
+                onChange={(e) => setLeadForm((s) => ({ ...s, avg_revenue: Number(e.target.value || 0) }))}
+              />
+            </div>
 
-      <div>
-        <Label>Status</Label>
-        <Select
-          value={leadForm.status}
-          onChange={(e) =>
-            setLeadForm((s) => ({ ...s, status: e.target.value as any }))
-          }
-        >
-          <option value="marcou">marcou</option>
-          <option value="realizou">realizou</option>
-          <option value="no_show">no_show</option>
-          <option value="proposta">proposta</option>
-          <option value="venda">venda</option>
-        </Select>
-      </div>
+            <div>
+              <Label>Status</Label>
+              <Select
+                value={leadForm.status}
+                onChange={(e) => {
+                  const next = e.target.value as MeetingLead["status"];
+                  setLeadForm((s) => ({
+                    ...s,
+                    status: next,
+                    deal_value: next === "venda" ? (s.deal_value ?? 0) : null,
+                    deal_date: next === "venda" ? (s.deal_date ?? todayISO()) : null,
+                  }));
+                }}
+              >
+                <option value="marcou">marcou</option>
+                <option value="realizou">realizou</option>
+                <option value="no_show">no_show</option>
+                <option value="proposta">proposta</option>
+                <option value="venda">venda</option>
+              </Select>
+            </div>
 
-      {leadForm.status === "venda" && (
-        <>
-          <div>
-            <Label>Valor da venda (R$)</Label>
-            <Input
-              type="number"
-              step="0.01"
-              min={0}
-              value={leadForm.deal_value ?? 0}
-              onChange={(e) =>
-                setLeadForm((s) => ({
-                  ...s,
-                  deal_value: Number(e.target.value || 0),
-                }))
-              }
-            />
+            {leadForm.status === "venda" && (
+              <>
+                <div>
+                  <Label>Valor da venda (R$)</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    value={leadForm.deal_value ?? 0}
+                    onChange={(e) => setLeadForm((s) => ({ ...s, deal_value: Number(e.target.value || 0) }))}
+                  />
+                </div>
+
+                <div>
+                  <Label>Data do fechamento</Label>
+                  <Input
+                    type="date"
+                    value={leadForm.deal_date ?? todayISO()}
+                    onChange={(e) => setLeadForm((s) => ({ ...s, deal_date: e.target.value }))}
+                  />
+                </div>
+              </>
+            )}
+
+            <div className="md:col-span-2">
+              <Label>Observações</Label>
+              <Input
+                value={leadForm.notes}
+                onChange={(e) => setLeadForm((s) => ({ ...s, notes: e.target.value }))}
+              />
+            </div>
           </div>
 
-          <div>
-            <Label>Data do fechamento</Label>
-            <Input
-              type="date"
-              value={leadForm.deal_date ?? todayISO()}
-              onChange={(e) =>
-                setLeadForm((s) => ({
-                  ...s,
-                  deal_date: e.target.value,
-                }))
-              }
-            />
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setOpenLead(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={saveLead}>{editingLeadId ? "Salvar alterações" : "Salvar lead"}</Button>
           </div>
-        </>
-      )}
-
-      <div className="md:col-span-2">
-        <Label>Observações</Label>
-        <Input
-          value={leadForm.notes}
-          onChange={(e) => setLeadForm((s) => ({ ...s, notes: e.target.value }))}
-        />
-      </div>
+        </div>
+      </Modal>
     </div>
-
-    <div className="flex justify-end gap-2">
-      <Button variant="outline" onClick={() => setOpenLead(false)}>
-        Cancelar
-      </Button>
-      <Button onClick={saveLead}>
-        {editingLeadId ? "Salvar alterações" : "Salvar lead"}
-      </Button>
-    </div>
-  </div>
-</Modal>
+  );
+}
