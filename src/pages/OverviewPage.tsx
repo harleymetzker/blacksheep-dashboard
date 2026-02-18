@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import DateRange from "../components/DateRange";
 import { Button, Card, Input, Label, Modal, Select, Stat, Table, Pill } from "../components/ui";
-import { brl, pct, safeDiv, todayISO, uid } from "../lib/utils";
+import { brl, pct, safeDiv, uid } from "../lib/utils";
 import { deleteMetaAds, listMetaAds, listMeetingLeads, upsertMetaAds, MetaAdsEntry } from "../lib/db";
 
 type Profile = "harley" | "giovanni";
@@ -77,15 +77,16 @@ export default function OverviewPage() {
 
       setMetaRows(meta);
 
+      // ✅ RECEITA AGORA VEM DE deal_value (só quando status = "venda")
       const revHarley =
         harleySales
           .filter((r) => r.status === "venda")
-          .reduce((sum, r) => sum + Number(r.avg_revenue || 0), 0) || 0;
+          .reduce((sum, r: any) => sum + Number(r.deal_value || 0), 0) || 0;
 
       const revGio =
         gioSales
           .filter((r) => r.status === "venda")
-          .reduce((sum, r) => sum + Number(r.avg_revenue || 0), 0) || 0;
+          .reduce((sum, r: any) => sum + Number(r.deal_value || 0), 0) || 0;
 
       setSalesRevenue({ harley: revHarley, giovanni: revGio });
     } catch (e: any) {
