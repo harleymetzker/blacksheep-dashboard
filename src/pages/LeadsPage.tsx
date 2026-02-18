@@ -523,82 +523,127 @@ export default function LeadsPage() {
       </Modal>
 
       {/* Modal: Lead */}
-      <Modal
-        open={openLead}
-        title={editingLeadId ? `Editar lead — ${profileLabel(leadProfile)}` : `Novo lead — ${profileLabel(leadProfile)}`}
-        subtitle="Use para leads que marcaram reunião. Depois atualize status."
-        onClose={() => setOpenLead(false)}
-      >
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <div>
-              <Label>Data do lead</Label>
-              <Input
-                type="date"
-                value={leadForm.lead_date}
-                onChange={(e) => setLeadForm((s) => ({ ...s, lead_date: e.target.value }))}
-              />
-            </div>
+<Modal
+  open={openLead}
+  title={editingLeadId ? `Editar lead — ${profileLabel(leadProfile)}` : `Novo lead — ${profileLabel(leadProfile)}`}
+  subtitle="Use para leads que marcaram reunião."
+  onClose={() => setOpenLead(false)}
+>
+  <div className="space-y-4">
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
 
-            <div className="hidden md:block" />
+      <div>
+        <Label>Data do lead</Label>
+        <Input
+          type="date"
+          value={leadForm.lead_date}
+          onChange={(e) => setLeadForm((s) => ({ ...s, lead_date: e.target.value }))}
+        />
+      </div>
 
-            <div className="md:col-span-2">
-              <Label>Nome</Label>
-              <Input value={leadForm.name} onChange={(e) => setLeadForm((s) => ({ ...s, name: e.target.value }))} />
-            </div>
+      <div className="md:col-span-2">
+        <Label>Nome</Label>
+        <Input
+          value={leadForm.name}
+          onChange={(e) => setLeadForm((s) => ({ ...s, name: e.target.value }))}
+        />
+      </div>
 
-            <div>
-              <Label>Contato do lead</Label>
-              <Input
-                value={leadForm.contact}
-                onChange={(e) => setLeadForm((s) => ({ ...s, contact: e.target.value }))}
-              />
-            </div>
+      <div>
+        <Label>Contato do lead</Label>
+        <Input
+          value={leadForm.contact}
+          onChange={(e) => setLeadForm((s) => ({ ...s, contact: e.target.value }))}
+        />
+      </div>
 
-            <div>
-              <Label>@ do Instagram</Label>
-              <Input
-                value={leadForm.instagram}
-                onChange={(e) => setLeadForm((s) => ({ ...s, instagram: e.target.value }))}
-              />
-            </div>
+      <div>
+        <Label>@ do Instagram</Label>
+        <Input
+          value={leadForm.instagram}
+          onChange={(e) => setLeadForm((s) => ({ ...s, instagram: e.target.value }))}
+        />
+      </div>
 
-            <div>
-              <Label>Faturamento médio (R$)</Label>
-              <Input
-                type="number"
-                step="0.01"
-                min={0}
-                value={leadForm.avg_revenue}
-                onChange={(e) => setLeadForm((s) => ({ ...s, avg_revenue: Number(e.target.value || 0) }))}
-              />
-            </div>
+      <div>
+        <Label>Faturamento médio (qualificação)</Label>
+        <Input
+          type="number"
+          step="0.01"
+          min={0}
+          value={leadForm.avg_revenue}
+          onChange={(e) =>
+            setLeadForm((s) => ({ ...s, avg_revenue: Number(e.target.value || 0) }))
+          }
+        />
+      </div>
 
-            <div>
-              <Label>Status</Label>
-              <Select value={leadForm.status} onChange={(e) => setLeadForm((s) => ({ ...s, status: e.target.value as any }))}>
-                <option value="marcou">marcou</option>
-                <option value="realizou">realizou</option>
-                <option value="no_show">no_show</option>
-                <option value="proposta">proposta</option>
-                <option value="venda">venda</option>
-              </Select>
-            </div>
+      <div>
+        <Label>Status</Label>
+        <Select
+          value={leadForm.status}
+          onChange={(e) =>
+            setLeadForm((s) => ({ ...s, status: e.target.value as any }))
+          }
+        >
+          <option value="marcou">marcou</option>
+          <option value="realizou">realizou</option>
+          <option value="no_show">no_show</option>
+          <option value="proposta">proposta</option>
+          <option value="venda">venda</option>
+        </Select>
+      </div>
 
-            <div className="md:col-span-2">
-              <Label>Observações</Label>
-              <Input value={leadForm.notes} onChange={(e) => setLeadForm((s) => ({ ...s, notes: e.target.value }))} />
-            </div>
+      {leadForm.status === "venda" && (
+        <>
+          <div>
+            <Label>Valor da venda (R$)</Label>
+            <Input
+              type="number"
+              step="0.01"
+              min={0}
+              value={leadForm.deal_value ?? 0}
+              onChange={(e) =>
+                setLeadForm((s) => ({
+                  ...s,
+                  deal_value: Number(e.target.value || 0),
+                }))
+              }
+            />
           </div>
 
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setOpenLead(false)}>
-              Cancelar
-            </Button>
-            <Button onClick={saveLead}>{editingLeadId ? "Salvar alterações" : "Salvar lead"}</Button>
+          <div>
+            <Label>Data do fechamento</Label>
+            <Input
+              type="date"
+              value={leadForm.deal_date ?? todayISO()}
+              onChange={(e) =>
+                setLeadForm((s) => ({
+                  ...s,
+                  deal_date: e.target.value,
+                }))
+              }
+            />
           </div>
-        </div>
-      </Modal>
+        </>
+      )}
+
+      <div className="md:col-span-2">
+        <Label>Observações</Label>
+        <Input
+          value={leadForm.notes}
+          onChange={(e) => setLeadForm((s) => ({ ...s, notes: e.target.value }))}
+        />
+      </div>
     </div>
-  );
-}
+
+    <div className="flex justify-end gap-2">
+      <Button variant="outline" onClick={() => setOpenLead(false)}>
+        Cancelar
+      </Button>
+      <Button onClick={saveLead}>
+        {editingLeadId ? "Salvar alterações" : "Salvar lead"}
+      </Button>
+    </div>
+  </div>
+</Modal>
