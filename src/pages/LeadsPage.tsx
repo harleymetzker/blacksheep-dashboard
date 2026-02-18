@@ -63,6 +63,12 @@ function lastNDays(rows: DailyFunnel[], n: number) {
   return rows.slice(0, n);
 }
 
+function isoDateFromCreatedAt(created_at?: string) {
+  if (!created_at) return todayISO();
+  // "2026-02-18T..." -> "2026-02-18"
+  return String(created_at).slice(0, 10);
+}
+
 export default function LeadsPage() {
   const today = new Date();
   const [range, setRange] = useState(() => ({
@@ -97,6 +103,7 @@ export default function LeadsPage() {
   const [leadProfile, setLeadProfile] = useState<Profile>("harley");
   const [editingLeadId, setEditingLeadId] = useState<string | null>(null);
   const [leadForm, setLeadForm] = useState({
+    lead_date: todayISO(), // <-- NOVO (data retroativa)
     name: "",
     contact: "",
     instagram: "",
@@ -122,6 +129,7 @@ export default function LeadsPage() {
     setLeadProfile(profile);
     setEditingLeadId(null);
     setLeadForm({
+      lead_date: todayISO(),
       name: "",
       contact: "",
       instagram: "",
@@ -135,12 +143,7 @@ export default function LeadsPage() {
     setLoading(true);
     setErr(null);
     try {
-      const [
-        dh,
-        dg,
-        mh,
-        mg,
-      ] = await Promise.all([
+      const [dh, dg, mh, mg] = await Promise.all([
         listDailyFunnel("harley", range.start, range.end),
         listDailyFunnel("giovanni", range.start, range.end),
         listMeetingLeads("harley", range.start, range.end),
@@ -246,7 +249,13 @@ export default function LeadsPage() {
   function editLead(profile: Profile, row: MeetingLead) {
     setLeadProfile(profile);
     setEditingLeadId(row.id);
+
+    // lead_date é a data "retroativa".
+    // fallback p/ created_at caso ainda existam registros antigos sem lead_date
+    const leadDate = (row as any).lead_date || isoDateFromCreatedAt(row.created_at);
+
     setLeadForm({
+      lead_date: leadDate,
       name: row.name ?? "",
       contact: row.contact ?? "",
       instagram: row.instagram ?? "",
@@ -263,6 +272,7 @@ export default function LeadsPage() {
       const payload: Partial<MeetingLead> = {
         id: editingLeadId ?? uid(),
         profile: leadProfile,
+        lead_date: leadForm.lead_date, // <-- NOVO (retroativo)
         name: leadForm.name.trim(),
         contact: leadForm.contact.trim(),
         instagram: leadForm.instagram.trim(),
@@ -273,6 +283,11 @@ export default function LeadsPage() {
 
       if (!payload.name) {
         setErr("Nome do lead é obrigatório.");
+        return;
+      }
+
+      if (!payload.lead_date) {
+        setErr("Data do lead é obrigatória.");
         return;
       }
 
@@ -382,14 +397,19 @@ export default function LeadsPage() {
         >
           <Table
             columns={[
-              { key: "created_at", header: "Criado", render: (r) => (r.created_at ? String(r.created_at).slice(0, 10) : "") },
+              {
+                key: "lead_date",
+                header: "Data",
+                render: (r) => String((r as any).lead_date || ""),
+              },
               { key: "name", header: "Nome" },
               { key: "contact", header: "Contato" },
               { key: "instagram", header: "@ Instagram" },
               {
                 key: "avg_revenue",
                 header: "Faturamento médio",
-                render: (r) => Number(r.avg_revenue || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }),
+                render: (r) =>
+                  Number(r.avg_revenue || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }),
               },
               {
                 key: "status",
@@ -454,7 +474,11 @@ export default function LeadsPage() {
       {/* Modal: Daily */}
       <Modal
         open={openDaily}
-        title={editingDailyId ? `Editar registro diário — ${profileLabel(dailyProfile)}` : `Novo registro diário — ${profileLabel(dailyProfile)}`}
+        title={
+          editingDailyId
+            ? `Editar registro diário — ${profileLabel(dailyProfile)}`
+            : `Novo registro diário — ${profileLabel(dailyProfile)}`
+        }
         subtitle="Preencha os números do dia. Esses dados somam nos cards do topo."
         onClose={() => setOpenDaily(false)}
       >
@@ -507,12 +531,20 @@ export default function LeadsPage() {
       >
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <Label>Data do lead</Label>
+              <Input
+                type="date"
+                value={leadForm.lead_date}
+                onChange={(e) => setLeadForm((s) => ({ ...s, lead_date: e.target.value }))}
+              />
+            </div>
+
+            <div className="hidden md:block" />
+
             <div className="md:col-span-2">
               <Label>Nome</Label>
-              <Input
-                value={leadForm.name}
-                onChange={(e) => setLeadForm((s) => ({ ...s, name: e.target.value }))}
-              />
+              <Input value={leadForm.name} onChange={(e) => setLeadForm((s) => ({ ...s, name: e.target.value }))} />
             </div>
 
             <div>
@@ -544,10 +576,7 @@ export default function LeadsPage() {
 
             <div>
               <Label>Status</Label>
-              <Select
-                value={leadForm.status}
-                onChange={(e) => setLeadForm((s) => ({ ...s, status: e.target.value as any }))}
-              >
+              <Select value={leadForm.status} onChange={(e) => setLeadForm((s) => ({ ...s, status: e.target.value as any }))}>
                 <option value="marcou">marcou</option>
                 <option value="realizou">realizou</option>
                 <option value="no_show">no_show</option>
@@ -558,10 +587,7 @@ export default function LeadsPage() {
 
             <div className="md:col-span-2">
               <Label>Observações</Label>
-              <Input
-                value={leadForm.notes}
-                onChange={(e) => setLeadForm((s) => ({ ...s, notes: e.target.value }))}
-              />
+              <Input value={leadForm.notes} onChange={(e) => setLeadForm((s) => ({ ...s, notes: e.target.value }))} />
             </div>
           </div>
 
