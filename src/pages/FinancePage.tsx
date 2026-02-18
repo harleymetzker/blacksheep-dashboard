@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import DateRange from "../components/DateRange";
 import { Button, Card, Input, Label, Modal, Select, Stat, Table } from "../components/ui";
 import { brl, safeDiv, todayISO, uid } from "../lib/utils";
-import { deleteFinance, listFinance, upsertFinance } from "../lib/db";
+import { deleteFinance, listBankBalances, listFinance, upsertBankBalance, upsertFinance } from "../lib/db";
 import {
   LineChart,
   Line,
@@ -49,7 +49,6 @@ function parseMoneyInput(raw: string): number {
   const s = String(raw ?? "").trim();
   if (!s) return 0;
 
-  // mantém apenas dígitos, ponto, vírgula e sinal
   const cleaned = s.replace(/[^\d.,-]/g, "");
 
   const hasComma = cleaned.includes(",");
@@ -69,10 +68,6 @@ function parseMoneyInput(raw: string): number {
 
   // 3) "1234.56" ou "1234"
   return safeNumber(cleaned);
-}
-
-function storageKeyForRange(start: string, end: string) {
-  return `bs_bank_balance:${start}:${end}`;
 }
 
 /* ---------------- Labels / Colors ---------------- */
@@ -121,7 +116,11 @@ export default function FinancePage() {
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // saldo bancário manual (por período)
+  // saldo inicial vindo do supabase (último saldo antes do período)
+  const [balanceDay, setBalanceDay] = useState<string>("");
+  const [saldoInicial, setSaldoInicial] = useState<number>(0);
+
+  // input para registrar saldo (salva no supabase)
   const [bankBalanceInput, setBankBalanceInput] = useState<string>("");
 
   // modal
@@ -131,29 +130,11 @@ export default function FinancePage() {
   const [form, setForm] = useState({
     day: todayISO(),
     kind: "receita" as "receita" | "despesa" | "retirada",
-    expense_type: null as any, // fixa/variavel apenas p/ despesa
+    expense_type: null as any,
     category: "administrativo",
     description: "",
     value: 0,
   });
-
-  // carregar/salvar saldo manual por período no localStorage
-  useEffect(() => {
-    try {
-      const key = storageKeyForRange(range.start, range.end);
-      const stored = localStorage.getItem(key);
-      setBankBalanceInput(stored ?? "");
-    } catch {
-      setBankBalanceInput("");
-    }
-  }, [range.start, range.end]);
-
-  useEffect(() => {
-    try {
-      const key = storageKeyForRange(range.start, range.end);
-      localStorage.setItem(key, bankBalanceInput);
-    } catch {}
-  }, [bankBalanceInput, range.start, range.end]);
 
   async function refresh() {
     setLoading(true);
@@ -168,8 +149,30 @@ export default function FinancePage() {
     }
   }
 
+  async function refreshBalances() {
+    setError(null);
+    try {
+      const data = await listBankBalances();
+
+      const start = new Date(range.start);
+      const prior = (data ?? []).find((b: any) => new Date(b.day) < start);
+
+      if (prior) {
+        setBalanceDay(prior.day);
+        setSaldoInicial(safeNumber(prior.balance));
+      } else {
+        setBalanceDay("");
+        setSaldoInicial(0);
+      }
+    } catch (e: any) {
+      setError(e?.message ?? "Erro ao carregar saldos bancários.");
+    }
+  }
+
   useEffect(() => {
-    if (authorized) refresh();
+    if (!authorized) return;
+    refresh();
+    refreshBalances();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range.start, range.end, authorized]);
 
@@ -211,8 +214,7 @@ export default function FinancePage() {
   const saidasCaixa = totalDespesas;
   const fluxoLiquido = entradasCaixa - saidasCaixa - retiradas;
 
-  const bankBalance = useMemo(() => parseMoneyInput(bankBalanceInput), [bankBalanceInput]);
-  const saldoInicialEstimado = bankBalance - fluxoLiquido;
+  const saldoFinalCalculado = saldoInicial + fluxoLiquido;
 
   /* ---------------- Gráficos ---------------- */
 
@@ -223,7 +225,6 @@ export default function FinancePage() {
         .sort((a, b) => String(a.day).localeCompare(String(b.day)))
         .map((r) => ({
           day: r.day,
-          // receita +, despesa -, retirada -
           valor: safeNumber(r.value) * (r.kind === "receita" ? 1 : -1),
         })),
     [rows]
@@ -278,7 +279,6 @@ export default function FinancePage() {
         ...form,
         value: safeNumber(form.value),
         expense_type: isDespesa ? form.expense_type : null,
-        // categoria só faz sentido p/ despesa; fora disso mantém "outros" para não quebrar NOT NULL
         category: isDespesa ? form.category : "outros",
         description: isRetirada && !form.description ? "Retirada de sócios" : form.description,
       });
@@ -355,25 +355,51 @@ export default function FinancePage() {
       <Card title="Caixa (Conta bancária)">
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <div className="space-y-2">
-            <Label>Saldo atual (banco)</Label>
+            <Label>Registrar saldo inicial do período</Label>
             <Input
               type="text"
               value={bankBalanceInput}
               onChange={(e) => setBankBalanceInput(e.target.value)}
               placeholder="Ex: 17.000,24"
             />
+
+            <div className="flex items-center gap-2">
+              <Button
+                onClick={async () => {
+                  const val = parseMoneyInput(bankBalanceInput);
+                  await upsertBankBalance({
+                    day: range.start,
+                    balance: val,
+                    notes: "Saldo inicial do período",
+                  });
+                  setBankBalanceInput("");
+                  await refreshBalances();
+                }}
+              >
+                Salvar saldo inicial
+              </Button>
+
+              {balanceDay ? (
+                <div className="text-xs text-slate-400">
+                  Saldo inicial puxado de: <span className="font-semibold">{balanceDay}</span>
+                </div>
+              ) : (
+                <div className="text-xs text-slate-400">Nenhum saldo anterior encontrado.</div>
+              )}
+            </div>
+
             <div className="text-xs text-slate-400">
-              Esse número é manual (o real do banco). O sistema reconcilia com o período.
+              Regra: o saldo inicial do período é o último saldo registrado antes de {range.start}.
             </div>
           </div>
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3 lg:col-span-2">
+            <Stat label="Saldo inicial" value={brl(saldoInicial)} />
             <Stat label="Entradas" value={brl(entradasCaixa)} />
             <Stat label="Saídas" value={brl(saidasCaixa)} />
             <Stat label="Retiradas" value={brl(retiradas)} />
             <Stat label="Fluxo líquido" value={brl(fluxoLiquido)} />
-            <Stat label="Saldo inicial (estim.)" value={brl(saldoInicialEstimado)} />
-            <Stat label="Saldo atual" value={brl(bankBalance)} />
+            <Stat label="Saldo final (calc.)" value={brl(saldoFinalCalculado)} />
           </div>
         </div>
       </Card>
@@ -493,7 +519,6 @@ export default function FinancePage() {
           <Select
             value={form.kind}
             onChange={(e: any) => {
-              // seu Select pode mandar string ou event
               const v = typeof e === "string" ? e : e?.target?.value;
               const kind = v as "receita" | "despesa" | "retirada";
 
@@ -501,7 +526,6 @@ export default function FinancePage() {
                 ...form,
                 kind,
                 expense_type: kind === "despesa" ? "fixa" : null,
-                // categoria só é relevante se virar despesa, mas mantemos estado sem renderizar fora
                 category: kind === "despesa" ? form.category : form.category,
               });
             }}
