@@ -1,11 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import DateRange from "../components/DateRange";
-import { Button, Card, Input, Label, Modal, Select, Stat, Table, Pill } from "../components/ui";
-import { brl, pct, safeDiv, todayISO } from "../lib/utils";
+import { Card, Stat, Table, Pill } from "../components/ui";
+import { brl, safeDiv, todayISO } from "../lib/utils";
 import { listDailyFunnel, listMeetingLeads, listMetaAds } from "../lib/db";
-
-type Profile = "harley" | "giovanni";
-type Stage = "contato" | "qualificacao" | "reuniao" | "proposta" | "fechado";
+import { Profile } from "../lib/utils";
 
 function startOfMonthISO(d: Date) {
   const x = new Date(d);
@@ -30,8 +28,7 @@ function isoDate(v?: string | null) {
 }
 
 function inRange(dayISO: string, start: string, end: string) {
-  // strings YYYY-MM-DD comparam bem lexicograficamente
-  return dayISO >= start && dayISO <= end;
+  return !!dayISO && dayISO >= start && dayISO <= end;
 }
 
 function leadDateFallback(row: any) {
@@ -43,8 +40,12 @@ function dealDate(row: any) {
 }
 
 function dealValue(row: any) {
-  const n = Number(row?.deal_value || 0);
+  const n = Number(row?.deal_value ?? 0);
   return Number.isFinite(n) ? n : 0;
+}
+
+function maxISO(a: string, b: string) {
+  return a >= b ? a : b;
 }
 
 export default function SalesPage() {
@@ -66,13 +67,18 @@ export default function SalesPage() {
   async function refresh() {
     setLoading(true);
     setErr(null);
+
     try {
+      const queryEnd = maxISO(todayISO(), range.end);
+
       const [meta, dh, dg, mh, mg] = await Promise.all([
         listMetaAds(range.start, range.end),
         listDailyFunnel("harley", range.start, range.end),
         listDailyFunnel("giovanni", range.start, range.end),
-        listMeetingLeads("harley", range.start, range.end),
-        listMeetingLeads("giovanni", range.start, range.end),
+
+        // IMPORTANT: buscar leads em range amplo e filtrar no front por lead_date/deal_date
+        listMeetingLeads("harley", "2000-01-01", queryEnd),
+        listMeetingLeads("giovanni", "2000-01-01", queryEnd),
       ]);
 
       setMetaRows(meta ?? []);
@@ -101,7 +107,7 @@ export default function SalesPage() {
     return out;
   }, [metaRows]);
 
-  function sumStage(rows: any[], stage: Stage) {
+  function sumStage(rows: any[], stage: "contato" | "reuniao") {
     return rows.reduce((s, r) => s + Number(r?.[stage] || 0), 0);
   }
 
@@ -118,20 +124,16 @@ export default function SalesPage() {
     };
   }, [dailyHarley, dailyGio]);
 
-  // ✅ VENDAS NO PERÍODO: status=venda E deal_date dentro do range
   function salesInPeriod(profile: Profile) {
     const rows = profile === "harley" ? meetingHarley : meetingGio;
+
     return (rows ?? []).filter((r: any) => {
       if (String(r.status) !== "venda") return false;
       const d = dealDate(r);
-      if (!d) return false; // venda sem deal_date não entra no período
       return inRange(d, range.start, range.end);
     });
   }
 
-  // ✅ PIPELINE (Proposta + Fechado)
-  // proposta entra pelo lead_date/created_at dentro do range
-  // venda entra pelo deal_date dentro do range
   function pipelineRows(profile: Profile) {
     const rows = profile === "harley" ? meetingHarley : meetingGio;
 
@@ -145,7 +147,6 @@ export default function SalesPage() {
 
       if (status === "venda") {
         const d = dealDate(r);
-        if (!d) return false;
         return inRange(d, range.start, range.end);
       }
 
@@ -168,7 +169,7 @@ export default function SalesPage() {
       const custoPorReuniao = safeDiv(spend, reunioes);
       const custoPorVenda = totalVendas > 0 ? safeDiv(spend, totalVendas) : 0;
 
-      out[p] = { spend, conversas, reunioes, totalVendas, custoPorConversa, custoPorReuniao, custoPorVenda };
+      out[p] = { totalVendas, custoPorConversa, custoPorReuniao, custoPorVenda };
     });
 
     return out;
@@ -192,18 +193,18 @@ export default function SalesPage() {
           </div>
         </Card>
 
-        <Card title="Pipeline (Proposta + Fechado)" subtitle="Proposta entra por data do lead. Venda entra por data do fechamento (deal_date).">
+        <Card
+          title="Pipeline (Proposta + Fechado)"
+          subtitle="Proposta entra por data do lead. Venda entra por data do fechamento (deal_date)."
+        >
           <Table
             columns={[
               { key: "name", header: "Nome" },
               { key: "status", header: "Status", render: (r) => <Pill>{String(r.status)}</Pill> },
               {
-                key: "deal_date",
+                key: "date",
                 header: "Data",
-                render: (r) => {
-                  const status = String(r.status);
-                  return status === "venda" ? dealDate(r) : leadDateFallback(r);
-                },
+                render: (r) => (String(r.status) === "venda" ? dealDate(r) : leadDateFallback(r)),
               },
               {
                 key: "deal_value",
