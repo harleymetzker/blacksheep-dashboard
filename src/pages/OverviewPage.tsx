@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import DateRange from "../components/DateRange";
 import { Button, Card, Input, Label, Modal, Select, Stat, Table, Pill } from "../components/ui";
-import { brl, pct, safeDiv, uid } from "../lib/utils";
+import { brl, pct, safeDiv, uid, todayISO } from "../lib/utils";
 import { deleteMetaAds, listMetaAds, listMeetingLeads, upsertMetaAds, MetaAdsEntry } from "../lib/db";
 
 type Profile = "harley" | "giovanni";
@@ -29,8 +29,20 @@ function isoDate(v?: string | null) {
 }
 
 function inRange(dayISO: string, start: string, end: string) {
-  // YYYY-MM-DD compara lexicograficamente
-  return dayISO >= start && dayISO <= end;
+  return !!dayISO && dayISO >= start && dayISO <= end;
+}
+
+function dealDate(row: any) {
+  return isoDate(row?.deal_date);
+}
+
+function dealValue(row: any) {
+  const n = Number(row?.deal_value ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function maxISO(a: string, b: string) {
+  return a >= b ? a : b;
 }
 
 export default function OverviewPage() {
@@ -49,7 +61,6 @@ export default function OverviewPage() {
     giovanni: 0,
   });
 
-  // Modal (add/edit campaign)
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({
@@ -79,41 +90,28 @@ export default function OverviewPage() {
     setLoading(true);
     setErr(null);
     try {
-      // IMPORTANT:
-      // Para "receita por vendas", precisamos considerar vendas cujo deal_date cai no período,
-      // mesmo que o lead tenha sido criado em outro mês.
-      // Então buscamos meeting leads até o fim do range, com um start bem antigo.
-      const LEADS_START = "2000-01-01";
+      const queryEnd = maxISO(todayISO(), range.end);
 
-      const [meta, harleyLeads, gioLeads] = await Promise.all([
+      const [meta, harleyLeadsAll, gioLeadsAll] = await Promise.all([
         listMetaAds(range.start, range.end),
-        listMeetingLeads("harley", LEADS_START, range.end),
-        listMeetingLeads("giovanni", LEADS_START, range.end),
+
+        // IMPORTANT: buscar em range amplo e filtrar no front por deal_date
+        listMeetingLeads("harley", "2000-01-01", queryEnd),
+        listMeetingLeads("giovanni", "2000-01-01", queryEnd),
       ]);
 
       setMetaRows(meta);
 
-      // ✅ RECEITA (VENDAS) = soma de deal_value
-      // ✅ Só conta quando status="venda" E deal_date dentro do range
+      // ✅ Receita: SOMA do deal_value APENAS quando status=venda E deal_date dentro do range
       const revHarley =
-        (harleyLeads ?? [])
-          .filter((r: any) => String(r.status) === "venda")
-          .filter((r: any) => {
-            const d = isoDate(r.deal_date);
-            if (!d) return false;
-            return inRange(d, range.start, range.end);
-          })
-          .reduce((sum: number, r: any) => sum + Number(r.deal_value || 0), 0) || 0;
+        (harleyLeadsAll ?? [])
+          .filter((r: any) => String(r.status) === "venda" && inRange(dealDate(r), range.start, range.end))
+          .reduce((sum: number, r: any) => sum + dealValue(r), 0) || 0;
 
       const revGio =
-        (gioLeads ?? [])
-          .filter((r: any) => String(r.status) === "venda")
-          .filter((r: any) => {
-            const d = isoDate(r.deal_date);
-            if (!d) return false;
-            return inRange(d, range.start, range.end);
-          })
-          .reduce((sum: number, r: any) => sum + Number(r.deal_value || 0), 0) || 0;
+        (gioLeadsAll ?? [])
+          .filter((r: any) => String(r.status) === "venda" && inRange(dealDate(r), range.start, range.end))
+          .reduce((sum: number, r: any) => sum + dealValue(r), 0) || 0;
 
       setSalesRevenue({ harley: revHarley, giovanni: revGio });
     } catch (e: any) {
@@ -154,7 +152,7 @@ export default function OverviewPage() {
       const followers = byProfile[p].followers;
 
       const ctr = safeDiv(clicks * 100, impressions);
-      const cpf = safeDiv(spend, followers); // cost per follower
+      const cpf = safeDiv(spend, followers);
       const revenue = salesRevenue[p];
       const roi = spend === 0 ? 0 : ((revenue - spend) / spend) * 100;
 
@@ -231,7 +229,9 @@ export default function OverviewPage() {
       </div>
 
       {err ? (
-        <div className="rounded-3xl border border-red-900/50 bg-red-950/30 px-5 py-4 text-sm text-red-200">{err}</div>
+        <div className="rounded-3xl border border-red-900/50 bg-red-950/30 px-5 py-4 text-sm text-red-200">
+          {err}
+        </div>
       ) : null}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -263,17 +263,9 @@ export default function OverviewPage() {
             { key: "start_date", header: "Início" },
             { key: "end_date", header: "Fim" },
             { key: "spend", header: "Investimento", render: (r) => brl(Number(r.spend || 0)) },
-            {
-              key: "impressions",
-              header: "Impressões",
-              render: (r) => Number(r.impressions || 0).toLocaleString("pt-BR"),
-            },
+            { key: "impressions", header: "Impressões", render: (r) => Number(r.impressions || 0).toLocaleString("pt-BR") },
             { key: "clicks", header: "Cliques", render: (r) => Number(r.clicks || 0).toLocaleString("pt-BR") },
-            {
-              key: "followers",
-              header: "Seguidores",
-              render: (r) => Number(r.followers || 0).toLocaleString("pt-BR"),
-            },
+            { key: "followers", header: "Seguidores", render: (r) => Number(r.followers || 0).toLocaleString("pt-BR") },
           ]}
           rows={metaRows}
           rowKey={(r) => r.id}
