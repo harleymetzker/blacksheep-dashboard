@@ -60,9 +60,10 @@ export type OpsTask = {
   id: string;
   created_at?: string;
   title: string;
+  description: string;
   owner: string;
   due: string | null;
-  status: "backlog" | "em_andamento" | "bloqueado" | "feito";
+  status: "pausado" | "em_andamento" | "feito" | "arquivado";
 };
 
 function mustConfigured() {
