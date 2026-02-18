@@ -57,6 +57,15 @@ const COST_TYPE_COLORS: Record<string, string> = {
   variavel: "#F97316",
 };
 
+function safeNumber(v: any) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function storageKeyForRange(start: string, end: string) {
+  return `bs_bank_balance:${start}:${end}`;
+}
+
 export default function FinancePage() {
   const today = new Date();
   const [range, setRange] = useState({
@@ -76,9 +85,31 @@ export default function FinancePage() {
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
+  // SALDO ATUAL (manual) — salva por período
+  const [bankBalanceInput, setBankBalanceInput] = useState<string>("");
+
+  useEffect(() => {
+    // carrega do localStorage quando mudar período
+    try {
+      const key = storageKeyForRange(range.start, range.end);
+      const stored = localStorage.getItem(key);
+      setBankBalanceInput(stored ?? "");
+    } catch {
+      setBankBalanceInput("");
+    }
+  }, [range.start, range.end]);
+
+  useEffect(() => {
+    // salva no localStorage ao digitar
+    try {
+      const key = storageKeyForRange(range.start, range.end);
+      localStorage.setItem(key, bankBalanceInput);
+    } catch {}
+  }, [bankBalanceInput, range.start, range.end]);
+
   const [form, setForm] = useState({
     day: todayISO(),
-    kind: "receita",
+    kind: "receita" as "receita" | "despesa" | "retirada",
     expense_type: null as any,
     category: "administrativo",
     description: "",
@@ -103,11 +134,12 @@ export default function FinancePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range.start, range.end, authorized]);
 
+  // ===== RESULTADO (DRE) — retirada NÃO entra =====
   const receita = useMemo(
     () =>
       rows
         .filter((r) => r.kind === "receita")
-        .reduce((sum, r) => sum + Number(r.value || 0), 0),
+        .reduce((sum, r) => sum + safeNumber(r.value), 0),
     [rows]
   );
 
@@ -115,7 +147,7 @@ export default function FinancePage() {
     () =>
       rows
         .filter((r) => r.kind === "despesa" && r.expense_type === "fixa")
-        .reduce((sum, r) => sum + Number(r.value || 0), 0),
+        .reduce((sum, r) => sum + safeNumber(r.value), 0),
     [rows]
   );
 
@@ -123,16 +155,37 @@ export default function FinancePage() {
     () =>
       rows
         .filter((r) => r.kind === "despesa" && r.expense_type === "variavel")
-        .reduce((sum, r) => sum + Number(r.value || 0), 0),
+        .reduce((sum, r) => sum + safeNumber(r.value), 0),
     [rows]
   );
 
   const totalDespesas = fixos + variaveis;
-
   const lucro = receita - totalDespesas;
   const margem = safeDiv(lucro * 100, receita);
 
-  // Linha: um ponto por lançamento (simples e direto)
+  // ===== CAIXA — inclui retirada =====
+  const retiradas = useMemo(
+    () =>
+      rows
+        .filter((r) => r.kind === "retirada")
+        .reduce((sum, r) => sum + safeNumber(r.value), 0),
+    [rows]
+  );
+
+  const entradasCaixa = receita; // por enquanto: receita = entrada (simplificado)
+  const saidasCaixa = totalDespesas; // despesas = saída (simplificado)
+  const fluxoLiquido = entradasCaixa - saidasCaixa - retiradas;
+
+  const bankBalance = safeNumber(
+    String(bankBalanceInput || "")
+      .replaceAll(".", "")
+      .replace(",", ".")
+  );
+
+  // Reconciliação: dado saldo atual (manual), estimar saldo inicial
+  const saldoInicialEstimado = bankBalance - fluxoLiquido;
+
+  // ===== Gráfico de linha (lançamentos) =====
   const chartData = useMemo(
     () =>
       [...rows]
@@ -140,18 +193,21 @@ export default function FinancePage() {
         .sort((a, b) => String(a.day).localeCompare(String(b.day)))
         .map((r) => ({
           day: r.day,
-          valor: Number(r.value || 0) * (r.kind === "despesa" ? -1 : 1),
+          // receita +, despesa -, retirada -
+          valor:
+            safeNumber(r.value) *
+            (r.kind === "receita" ? 1 : r.kind === "despesa" ? -1 : -1),
         })),
     [rows]
   );
 
-  // Pizza #1: categorias (fixo + variável juntos)
+  // ===== Pizza #1: categorias (somente despesas) =====
   const pieByCategory = useMemo(() => {
     const map = new Map<string, number>();
     for (const r of rows) {
       if (r.kind !== "despesa") continue;
       const cat = String(r.category || "outros");
-      map.set(cat, (map.get(cat) ?? 0) + Number(r.value || 0));
+      map.set(cat, (map.get(cat) ?? 0) + safeNumber(r.value));
     }
 
     return Array.from(map.entries())
@@ -163,7 +219,7 @@ export default function FinancePage() {
       .sort((a, b) => b.value - a.value);
   }, [rows]);
 
-  // Pizza #2: fixo vs variável
+  // ===== Pizza #2: fixo vs variável (somente despesas) =====
   const pieByType = useMemo(() => {
     return [
       { name: "Fixos", key: "fixa", value: fixos },
@@ -187,16 +243,21 @@ export default function FinancePage() {
   async function save() {
     setError(null);
     try {
+      const isDespesa = form.kind === "despesa";
+      const isReceita = form.kind === "receita";
+      const isRetirada = form.kind === "retirada";
+
       await upsertFinance({
         id: editingId ?? uid(),
         ...form,
-        value: Number(form.value || 0),
-        // Se não for despesa, não existe expense_type
-        expense_type: form.kind === "despesa" ? form.expense_type : null,
-        // Categoria só faz sentido para despesa.
-        // Para evitar erro caso a coluna no Supabase seja NOT NULL, usamos "outros" em receitas.
-        category: form.kind === "despesa" ? form.category : "outros",
+        value: safeNumber(form.value),
+        expense_type: isDespesa ? form.expense_type : null,
+        // categoria só existe para despesa (pra não quebrar schema NOT NULL, usamos "outros" fora de despesa)
+        category: isDespesa ? form.category : "outros",
+        // opcionalmente, você pode padronizar descrição para retirada
+        description: isRetirada && !form.description ? "Retirada de sócios" : form.description,
       });
+
       setOpen(false);
       refresh();
     } catch (e: any) {
@@ -250,7 +311,9 @@ export default function FinancePage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="text-lg font-semibold">Financeiro</div>
-          <div className="text-sm text-slate-400">Resumo em tempo real + histórico por período.</div>
+          <div className="text-sm text-slate-400">
+            Resultado (DRE) + Caixa (saldo bancário) por período.
+          </div>
         </div>
         <div className="flex flex-wrap items-end gap-3">
           <DateRange start={range.start} end={range.end} onChange={setRange} />
@@ -264,17 +327,48 @@ export default function FinancePage() {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
-        <Stat label="Receita" value={brl(receita)} />
-        <Stat label="Custos fixos" value={brl(fixos)} />
-        <Stat label="Custos variáveis" value={brl(variaveis)} />
-        <Stat label="Lucro" value={brl(lucro)} />
-        <Stat label="Margem" value={`${margem.toFixed(1)}%`} />
-      </div>
+      {/* ===== CAIXA ===== */}
+      <Card title="Caixa (Conta bancária)">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <div className="space-y-2">
+            <Label>Saldo atual (banco)</Label>
+            <Input
+              type="number"
+              step="0.01"
+              value={bankBalanceInput}
+              onChange={(e) => setBankBalanceInput(e.target.value)}
+              placeholder="Ex: 120000"
+            />
+            <div className="text-xs text-slate-400">
+              Esse número é manual (o real do banco). O sistema reconcilia com o período.
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3 lg:col-span-2">
+            <Stat label="Entradas" value={brl(entradasCaixa)} />
+            <Stat label="Saídas" value={brl(saidasCaixa)} />
+            <Stat label="Retiradas" value={brl(retiradas)} />
+            <Stat label="Fluxo líquido" value={brl(fluxoLiquido)} />
+            <Stat label="Saldo inicial (estim.)" value={brl(saldoInicialEstimado)} />
+            <Stat label="Saldo atual" value={brl(bankBalance)} />
+          </div>
+        </div>
+      </Card>
+
+      {/* ===== RESULTADO (DRE) ===== */}
+      <Card title="Resultado (DRE) — retiradas não afetam margem">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+          <Stat label="Receita" value={brl(receita)} />
+          <Stat label="Custos fixos" value={brl(fixos)} />
+          <Stat label="Custos variáveis" value={brl(variaveis)} />
+          <Stat label="Lucro" value={brl(lucro)} />
+          <Stat label="Margem" value={`${margem.toFixed(1)}%`} />
+        </div>
+      </Card>
 
       <Card title="Evolução (lançamentos)">
         <div className="text-sm text-slate-400 mb-3">
-          Receita entra positiva, despesa entra negativa (para visualizar movimento).
+          Receita entra positiva, despesas e retiradas entram negativas (movimento no período).
         </div>
         <ResponsiveContainer width="100%" height={320}>
           <LineChart data={chartData}>
@@ -373,7 +467,7 @@ export default function FinancePage() {
             { key: "expense_type", header: "Despesa" },
             { key: "category", header: "Categoria" },
             { key: "description", header: "Descrição" },
-            { key: "value", header: "Valor", render: (r) => brl(Number(r.value || 0)) },
+            { key: "value", header: "Valor", render: (r) => brl(safeNumber(r.value)) },
           ]}
           rows={rows}
           rowKey={(r) => r.id}
@@ -393,16 +487,23 @@ export default function FinancePage() {
           <Label>Tipo</Label>
           <Select
             value={form.kind}
-            onChange={(e) =>
+            onChange={(e: any) => {
+              // seu Select pode mandar string ou event
+              const v = typeof e === "string" ? e : e?.target?.value;
+
+              const kind = v as "receita" | "despesa" | "retirada";
+
               setForm({
                 ...form,
-                kind: e.target.value,
-                expense_type: e.target.value === "despesa" ? "fixa" : null,
-              })
-            }
+                kind,
+                expense_type: kind === "despesa" ? "fixa" : null,
+                category: kind === "despesa" ? form.category : "administrativo",
+              });
+            }}
           >
             <option value="receita">Receita</option>
             <option value="despesa">Despesa</option>
+            <option value="retirada">Retirada de sócios</option>
           </Select>
 
           {form.kind === "despesa" && (
@@ -410,18 +511,23 @@ export default function FinancePage() {
               <Label>Tipo de despesa</Label>
               <Select
                 value={form.expense_type ?? "fixa"}
-                onChange={(e) => setForm({ ...form, expense_type: e.target.value })}
+                onChange={(e: any) => {
+                  const v = typeof e === "string" ? e : e?.target?.value;
+                  setForm({ ...form, expense_type: v });
+                }}
               >
                 <option value="fixa">Fixa</option>
                 <option value="variavel">Variável</option>
               </Select>
-            </>
-          )}
 
-          {form.kind === "despesa" && (
-            <>
               <Label>Categoria</Label>
-              <Select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+              <Select
+                value={form.category}
+                onChange={(e: any) => {
+                  const v = typeof e === "string" ? e : e?.target?.value;
+                  setForm({ ...form, category: v });
+                }}
+              >
                 <option value="administrativo">Administrativo</option>
                 <option value="pessoas">Pessoas</option>
                 <option value="impostos">Impostos</option>
