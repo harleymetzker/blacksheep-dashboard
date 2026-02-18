@@ -14,6 +14,7 @@ import {
   PieChart,
   Pie,
   Legend,
+  Cell,
 } from "recharts";
 
 function startOfMonthISO(d: Date) {
@@ -38,6 +39,22 @@ const CATEGORY_LABEL: Record<string, string> = {
   comissoes: "Comissões",
   taxas: "Taxas",
   outros: "Outros",
+};
+
+const CATEGORY_COLOR_BY_KEY: Record<string, string> = {
+  administrativo: "#3B82F6",
+  pessoas: "#10B981",
+  impostos: "#F59E0B",
+  sistemas: "#6366F1",
+  marketing: "#EC4899",
+  comissoes: "#F97316",
+  taxas: "#64748B",
+  outros: "#94A3B8",
+};
+
+const COST_TYPE_COLORS: Record<string, string> = {
+  fixa: "#3B82F6",
+  variavel: "#F97316",
 };
 
 export default function FinancePage() {
@@ -115,7 +132,7 @@ export default function FinancePage() {
   const lucro = receita - totalDespesas;
   const margem = safeDiv(lucro * 100, receita);
 
-  // Linha: você pode filtrar só por "day" e somar por dia, mas mantendo simples por enquanto
+  // Linha: um ponto por lançamento (simples e direto)
   const chartData = useMemo(
     () =>
       [...rows]
@@ -128,7 +145,7 @@ export default function FinancePage() {
     [rows]
   );
 
-  // Pizza #1: categorias (fixo + variável juntos) sobre o total de despesas
+  // Pizza #1: categorias (fixo + variável juntos)
   const pieByCategory = useMemo(() => {
     const map = new Map<string, number>();
     for (const r of rows) {
@@ -137,18 +154,16 @@ export default function FinancePage() {
       map.set(cat, (map.get(cat) ?? 0) + Number(r.value || 0));
     }
 
-    const arr = Array.from(map.entries())
+    return Array.from(map.entries())
       .map(([category, value]) => ({
         name: CATEGORY_LABEL[category] ?? category,
         key: category,
         value,
       }))
       .sort((a, b) => b.value - a.value);
-
-    return arr;
   }, [rows]);
 
-  // Pizza #2: fixo vs variável sobre o total de despesas
+  // Pizza #2: fixo vs variável
   const pieByType = useMemo(() => {
     return [
       { name: "Fixos", key: "fixa", value: fixos },
@@ -176,8 +191,11 @@ export default function FinancePage() {
         id: editingId ?? uid(),
         ...form,
         value: Number(form.value || 0),
-        // Normaliza: se não for despesa, expense_type vira null
+        // Se não for despesa, não existe expense_type
         expense_type: form.kind === "despesa" ? form.expense_type : null,
+        // Categoria só faz sentido para despesa.
+        // Para evitar erro caso a coluna no Supabase seja NOT NULL, usamos "outros" em receitas.
+        category: form.kind === "despesa" ? form.category : "outros",
       });
       setOpen(false);
       refresh();
@@ -232,9 +250,7 @@ export default function FinancePage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="text-lg font-semibold">Financeiro</div>
-          <div className="text-sm text-slate-400">
-            Resumo em tempo real + histórico por período.
-          </div>
+          <div className="text-sm text-slate-400">Resumo em tempo real + histórico por período.</div>
         </div>
         <div className="flex flex-wrap items-end gap-3">
           <DateRange start={range.start} end={range.end} onChange={setRange} />
@@ -265,10 +281,7 @@ export default function FinancePage() {
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="day" />
             <YAxis />
-            <Tooltip
-              formatter={(v: any) => brl(Number(v))}
-              labelFormatter={(l: any) => `Dia: ${l}`}
-            />
+            <Tooltip formatter={(v: any) => brl(Number(v))} labelFormatter={(l: any) => `Dia: ${l}`} />
             <Line type="monotone" dataKey="valor" stroke="#8884d8" dot={false} />
           </LineChart>
         </ResponsiveContainer>
@@ -280,9 +293,7 @@ export default function FinancePage() {
         ) : (
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <div className="rounded-3xl border border-slate-800 bg-slate-900/20 p-4">
-              <div className="mb-2 text-sm font-semibold">
-                % por categoria (fixo + variável)
-              </div>
+              <div className="mb-2 text-sm font-semibold">% por categoria (fixo + variável)</div>
               <div className="text-xs text-slate-400 mb-3">
                 Base: total de despesas do período ({brl(totalDespesas)}).
               </div>
@@ -290,7 +301,7 @@ export default function FinancePage() {
               <ResponsiveContainer width="100%" height={320}>
                 <PieChart>
                   <Tooltip
-                    formatter={(v: any, _n: any, p: any) => {
+                    formatter={(v: any) => {
                       const value = Number(v);
                       const percent = safeDiv(value * 100, totalDespesas);
                       return [`${brl(value)} • ${percent.toFixed(1)}%`, "Valor"];
@@ -304,15 +315,20 @@ export default function FinancePage() {
                     cx="50%"
                     cy="50%"
                     outerRadius={110}
-                  />
+                  >
+                    {pieByCategory.map((entry) => (
+                      <Cell
+                        key={entry.key}
+                        fill={CATEGORY_COLOR_BY_KEY[String(entry.key)] ?? "#94A3B8"}
+                      />
+                    ))}
+                  </Pie>
                 </PieChart>
               </ResponsiveContainer>
             </div>
 
             <div className="rounded-3xl border border-slate-800 bg-slate-900/20 p-4">
-              <div className="mb-2 text-sm font-semibold">
-                % por tipo de custo (fixo vs variável)
-              </div>
+              <div className="mb-2 text-sm font-semibold">% por tipo de custo (fixo vs variável)</div>
               <div className="text-xs text-slate-400 mb-3">
                 Base: total de despesas do período ({brl(totalDespesas)}).
               </div>
@@ -334,7 +350,14 @@ export default function FinancePage() {
                     cx="50%"
                     cy="50%"
                     outerRadius={110}
-                  />
+                  >
+                    {pieByType.map((entry) => (
+                      <Cell
+                        key={entry.key}
+                        fill={COST_TYPE_COLORS[String(entry.key)] ?? "#64748B"}
+                      />
+                    ))}
+                  </Pie>
                 </PieChart>
               </ResponsiveContainer>
             </div>
@@ -350,11 +373,7 @@ export default function FinancePage() {
             { key: "expense_type", header: "Despesa" },
             { key: "category", header: "Categoria" },
             { key: "description", header: "Descrição" },
-            {
-              key: "value",
-              header: "Valor",
-              render: (r) => brl(Number(r.value || 0)),
-            },
+            { key: "value", header: "Valor", render: (r) => brl(Number(r.value || 0)) },
           ]}
           rows={rows}
           rowKey={(r) => r.id}
@@ -369,11 +388,7 @@ export default function FinancePage() {
       <Modal open={open} title="Registrar lançamento" onClose={() => setOpen(false)}>
         <div className="space-y-3">
           <Label>Dia</Label>
-          <Input
-            type="date"
-            value={form.day}
-            onChange={(e) => setForm({ ...form, day: e.target.value })}
-          />
+          <Input type="date" value={form.day} onChange={(e) => setForm({ ...form, day: e.target.value })} />
 
           <Label>Tipo</Label>
           <Select
@@ -403,26 +418,24 @@ export default function FinancePage() {
             </>
           )}
 
-          <Label>Categoria</Label>
-          <Select
-            value={form.category}
-            onChange={(e) => setForm({ ...form, category: e.target.value })}
-          >
-            <option value="administrativo">Administrativo</option>
-            <option value="pessoas">Pessoas</option>
-            <option value="impostos">Impostos</option>
-            <option value="sistemas">Sistemas</option>
-            <option value="marketing">Marketing</option>
-            <option value="comissoes">Comissões</option>
-            <option value="taxas">Taxas</option>
-            <option value="outros">Outros</option>
-          </Select>
+          {form.kind === "despesa" && (
+            <>
+              <Label>Categoria</Label>
+              <Select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+                <option value="administrativo">Administrativo</option>
+                <option value="pessoas">Pessoas</option>
+                <option value="impostos">Impostos</option>
+                <option value="sistemas">Sistemas</option>
+                <option value="marketing">Marketing</option>
+                <option value="comissoes">Comissões</option>
+                <option value="taxas">Taxas</option>
+                <option value="outros">Outros</option>
+              </Select>
+            </>
+          )}
 
           <Label>Descrição</Label>
-          <Input
-            value={form.description}
-            onChange={(e) => setForm({ ...form, description: e.target.value })}
-          />
+          <Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
 
           <Label>Valor (R$)</Label>
           <Input
