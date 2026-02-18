@@ -40,7 +40,7 @@ export type MeetingLead = {
 export type FinanceEntry = {
   id: string;
   day: string;
-  kind: "receita" | "despesa";
+  kind: "receita" | "despesa" | "retirada";
   expense_type: "fixa" | "variavel" | null;
   category:
     | "administrativo"
@@ -182,4 +182,34 @@ export async function deleteOps(id: string) {
   mustConfigured();
   const { error } = await supabase.from("ops_tasks").delete().eq("id", id);
   if (error) throw error;
+}
+export type BankBalance = {
+  id: string;
+  day: string; // YYYY-MM-DD
+  balance: number;
+  notes?: string | null;
+  created_at?: string;
+};
+
+export async function listBankBalances() {
+  mustConfigured();
+  const { data, error } = await supabase
+    .from("bank_balances")
+    .select("*")
+    .order("day", { ascending: false });
+
+  if (error) throw error;
+  return (data ?? []) as BankBalance[];
+}
+
+export async function upsertBankBalance(row: Partial<BankBalance>) {
+  mustConfigured();
+  const { data, error } = await supabase
+    .from("bank_balances")
+    .upsert(row)
+    .select("*")
+    .single();
+
+  if (error) throw error;
+  return data as BankBalance;
 }
