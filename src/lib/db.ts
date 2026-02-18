@@ -29,28 +29,23 @@ export type MeetingLead = {
   id: string;
   profile: Profile;
   created_at?: string;
-
-  lead_date: string; // data do lead (retroativo / filtro por período)
-
   name: string;
   contact: string;
   instagram: string;
-
-  avg_revenue: number; // faturamento do lead (qualificação)
-
+  avg_revenue: number;
   status: "marcou" | "realizou" | "no_show" | "venda" | "proposta";
-
-  // venda (receita REAL só vem daqui)
-  deal_value: number | null; // valor fechado
-  deal_date: string | null; // data do fechamento
-
   notes: string;
+
+  // novos campos (podem existir ou não na tabela; TS aceita via Partial no upsert)
+  lead_date?: string | null;
+  deal_value?: number | null;
+  deal_date?: string | null;
 };
 
 export type FinanceEntry = {
   id: string;
   day: string;
-  kind: "receita" | "despesa";
+  kind: "receita" | "despesa" | "retirada";
   expense_type: "fixa" | "variavel" | null;
   category:
     | "administrativo"
@@ -76,13 +71,23 @@ export type OpsTask = {
   status: "pausado" | "em_andamento" | "feito" | "arquivado";
 };
 
+/** ✅ NOVO: saldo bancário por período (compartilhado no Supabase) */
+export type BankBalanceEntry = {
+  id: string;
+  start_date: string;
+  end_date: string;
+  // saldo atual no banco (manual)
+  balance: number;
+  // opcional: saldo inicial manual se você tiver criado essa coluna
+  opening_balance?: number | null;
+  created_at?: string;
+};
+
 function mustConfigured() {
   if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
     throw new Error("Supabase não configurado (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).");
   }
 }
-
-/* ---------------- META ADS ---------------- */
 
 export async function listMetaAds(start: string, end: string) {
   mustConfigured();
@@ -108,8 +113,6 @@ export async function deleteMetaAds(id: string) {
   const { error } = await supabase.from("meta_ads_entries").delete().eq("id", id);
   if (error) throw error;
 }
-
-/* ---------------- DAILY FUNNEL ---------------- */
 
 export async function listDailyFunnel(profile: Profile, start: string, end: string) {
   mustConfigured();
@@ -137,20 +140,17 @@ export async function deleteDailyFunnel(id: string) {
   if (error) throw error;
 }
 
-/* ---------------- MEETING LEADS ---------------- */
-
 export async function listMeetingLeads(profile: Profile, start: string, end: string) {
   mustConfigured();
-
-  // Filtra por lead_date (retroativo)
   const { data, error } = await supabase
     .from("meeting_leads")
     .select("*")
     .eq("profile", profile)
-    .gte("lead_date", start)
-    .lte("lead_date", end)
-    .order("lead_date", { ascending: false });
-
+    // mantém por created_at (para retrocompat). Se você migrou para lead_date,
+    // a página de Leads usa lead_date na UI, mas aqui continua ok para filtrar mês.
+    .gte("created_at", start + "T00:00:00")
+    .lte("created_at", end + "T23:59:59")
+    .order("created_at", { ascending: false });
   if (error) throw error;
   return (data ?? []) as MeetingLead[];
 }
@@ -167,8 +167,6 @@ export async function deleteMeetingLead(id: string) {
   const { error } = await supabase.from("meeting_leads").delete().eq("id", id);
   if (error) throw error;
 }
-
-/* ---------------- FINANCE ---------------- */
 
 export async function listFinance(start: string, end: string) {
   mustConfigured();
@@ -195,15 +193,29 @@ export async function deleteFinance(id: string) {
   if (error) throw error;
 }
 
-/* ---------------- OPS ---------------- */
+/** ✅ NOVO: Bank balances (precisa existir tabela bank_balances) */
+export async function listBankBalances(start: string, end: string) {
+  mustConfigured();
+  const { data, error } = await supabase
+    .from("bank_balances")
+    .select("*")
+    .eq("start_date", start)
+    .eq("end_date", end)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as BankBalanceEntry[];
+}
+
+export async function upsertBankBalance(row: Partial<BankBalanceEntry>) {
+  mustConfigured();
+  const { data, error } = await supabase.from("bank_balances").upsert(row).select("*").single();
+  if (error) throw error;
+  return data as BankBalanceEntry;
+}
 
 export async function listOps() {
   mustConfigured();
-  const { data, error } = await supabase
-    .from("ops_tasks")
-    .select("*")
-    .order("created_at", { ascending: false });
-
+  const { data, error } = await supabase.from("ops_tasks").select("*").order("created_at", { ascending: false });
   if (error) throw error;
   return (data ?? []) as OpsTask[];
 }
