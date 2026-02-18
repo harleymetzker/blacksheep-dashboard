@@ -17,7 +17,6 @@ function statusLabel(s: OpsStatus) {
 export default function OpsPage() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-
   const [rows, setRows] = useState<any[]>([]);
 
   const [open, setOpen] = useState(false);
@@ -44,17 +43,10 @@ export default function OpsPage() {
     }
   }
 
-  useEffect(() => {
-    refresh();
-  }, []);
+  useEffect(() => { refresh(); }, []);
 
   const stats = useMemo(() => {
-    const out: Record<OpsStatus, number> = {
-      pausado: 0,
-      em_andamento: 0,
-      feito: 0,
-      arquivado: 0,
-    };
+    const out: Record<OpsStatus, number> = { pausado: 0, em_andamento: 0, feito: 0, arquivado: 0 };
     for (const r of rows) {
       const s = (r.status ?? "pausado") as OpsStatus;
       if (out[s] !== undefined) out[s] += 1;
@@ -64,13 +56,7 @@ export default function OpsPage() {
 
   function openNew() {
     setEditingId(null);
-    setForm({
-      title: "",
-      description: "",
-      owner: "",
-      due: null,
-      status: "pausado",
-    });
+    setForm({ title: "", description: "", owner: "", due: null, status: "pausado" });
     setOpen(true);
   }
 
@@ -97,12 +83,10 @@ export default function OpsPage() {
         due: form.due ? form.due : null,
         status: form.status,
       };
-
       if (!payload.title) {
         setErr("Título é obrigatório.");
         return;
       }
-
       await upsertOps(payload);
       setOpen(false);
       await refresh();
@@ -130,12 +114,7 @@ export default function OpsPage() {
   ];
 
   const grouped = useMemo(() => {
-    const g: Record<OpsStatus, any[]> = {
-      pausado: [],
-      em_andamento: [],
-      feito: [],
-      arquivado: [],
-    };
+    const g: Record<OpsStatus, any[]> = { pausado: [], em_andamento: [], feito: [], arquivado: [] };
     for (const r of rows) {
       const s = (r.status ?? "pausado") as OpsStatus;
       (g[s] ?? g.pausado).push(r);
@@ -158,7 +137,6 @@ export default function OpsPage() {
           <div className="text-lg font-semibold">Operação</div>
           <div className="text-sm text-slate-400">Kanban simples para execução.</div>
         </div>
-
         <div className="flex items-end gap-3">
           <Button onClick={openNew}>Adicionar tarefa</Button>
           {loading ? <Pill>carregando…</Pill> : <Pill>ok</Pill>}
@@ -186,24 +164,50 @@ export default function OpsPage() {
                 <div className="text-sm text-slate-400">Sem tarefas.</div>
               ) : (
                 grouped[c.key].map((t) => (
-                  <div key={t.id} className="rounded-3xl border border-slate-800 bg-slate-950/20 p-4">
+                  <div
+                    key={t.id}
+                    className="rounded-2xl border border-slate-800 bg-slate-950/20 p-4"
+                    style={{ overflowWrap: "anywhere" }}
+                  >
                     <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="font-semibold">{t.title}</div>
+                      {/* Conteúdo */}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <div className="truncate font-semibold">
+                            {t.title}
+                          </div>
+                          {t.due ? <Pill>{t.due}</Pill> : null}
+                        </div>
+
                         {t.description ? (
-                          <div className="mt-1 text-sm text-slate-300 whitespace-pre-wrap break-words">
+                          <div
+                            className="mt-2 text-sm text-slate-300"
+                            style={{
+                              display: "-webkit-box",
+                              WebkitLineClamp: 3,
+                              WebkitBoxOrient: "vertical",
+                              overflow: "hidden",
+                            }}
+                          >
                             {t.description}
                           </div>
                         ) : (
-                          <div className="mt-1 text-sm text-slate-500">Sem descrição.</div>
+                          <div className="mt-2 text-sm text-slate-500">Sem descrição.</div>
                         )}
-                        <div className="mt-2 text-xs text-slate-400">
-                          Dono: {t.owner || "—"} • Prazo: {t.due || "—"}
+
+                        <div className="mt-3 text-xs text-slate-400 truncate">
+                          Dono: {t.owner || "—"}
                         </div>
                       </div>
-                      <div className="flex shrink-0 gap-2">
-                        <Button variant="outline" onClick={() => openEdit(t)}>Editar</Button>
-                        <Button variant="ghost" onClick={() => remove(t.id)}>Excluir</Button>
+
+                      {/* Ações */}
+                      <div className="flex shrink-0 flex-col gap-2">
+                        <Button variant="outline" onClick={() => openEdit(t)}>
+                          Editar
+                        </Button>
+                        <Button variant="ghost" onClick={() => remove(t.id)}>
+                          Excluir
+                        </Button>
                       </div>
                     </div>
                   </div>
@@ -217,7 +221,7 @@ export default function OpsPage() {
       <Modal
         open={open}
         title={editingId ? "Editar tarefa" : "Nova tarefa"}
-        subtitle="Inclua descrição para o time saber exatamente o que fazer."
+        subtitle="Inclua descrição quando precisar detalhar o que deve ser feito."
         onClose={() => setOpen(false)}
       >
         <div className="space-y-3">
@@ -233,30 +237,28 @@ export default function OpsPage() {
               onChange={(e) => setForm({ ...form, description: e.target.value })}
               className="w-full rounded-2xl border border-slate-700 bg-slate-950/40 px-3 py-2 text-sm text-slate-50 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-500"
               rows={5}
-              placeholder="Descreva exatamente o que precisa ser feito, contexto, links, critérios de pronto, etc."
+              placeholder="Contexto, links, critérios de pronto, etc."
             />
           </div>
 
-          <div>
-            <Label>Dono</Label>
-            <Input value={form.owner} onChange={(e) => setForm({ ...form, owner: e.target.value })} />
-          </div>
-
-          <div>
-            <Label>Prazo</Label>
-            <Input
-              type="date"
-              value={form.due ?? ""}
-              onChange={(e) => setForm({ ...form, due: e.target.value || null })}
-            />
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <Label>Dono</Label>
+              <Input value={form.owner} onChange={(e) => setForm({ ...form, owner: e.target.value })} />
+            </div>
+            <div>
+              <Label>Prazo</Label>
+              <Input
+                type="date"
+                value={form.due ?? ""}
+                onChange={(e) => setForm({ ...form, due: e.target.value || null })}
+              />
+            </div>
           </div>
 
           <div>
             <Label>Status</Label>
-            <Select
-              value={form.status}
-              onChange={(e) => setForm({ ...form, status: e.target.value as OpsStatus })}
-            >
+            <Select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as OpsStatus })}>
               <option value="pausado">{statusLabel("pausado")}</option>
               <option value="em_andamento">{statusLabel("em_andamento")}</option>
               <option value="feito">{statusLabel("feito")}</option>
