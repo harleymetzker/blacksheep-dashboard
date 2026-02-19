@@ -1,6 +1,8 @@
 import { supabase } from "./supabase";
 import { Profile } from "./utils";
 
+/* ---------------- Types ---------------- */
+
 export type MetaAdsEntry = {
   id: string;
   profile: Profile;
@@ -80,10 +82,19 @@ export type BankBalanceEntry = {
   created_at?: string;
 };
 
+/* ---------------- Guard ---------------- */
+
 function mustConfigured() {
   if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
     throw new Error("Supabase não configurado (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).");
   }
+}
+
+function dayStartISO(d: string) {
+  return `${d}T00:00:00`;
+}
+function dayEndISO(d: string) {
+  return `${d}T23:59:59`;
 }
 
 /* ---------------- Meta Ads ---------------- */
@@ -145,20 +156,57 @@ export async function deleteDailyFunnel(id: string) {
 
 /* ---------------- Meeting Leads ---------------- */
 /**
- * IMPORTANTE:
- * Esta função ainda filtra por created_at (retrocompat).
- * Se você quiser que a página Leads respeite lead_date, isso precisa mudar aqui
- * (mas eu não mexo agora sem você pedir, porque afeta outras páginas).
+ * ✅ Agora respeita lead_date.
+ *
+ * Regra:
+ *  - se lead_date existir: filtra por lead_date (YYYY-MM-DD)
+ *  - se lead_date estiver null: filtra por created_at (retrocompat)
+ *
+ * Isso resolve "lead sumindo" quando o usuário escolhe o mês pelo input de data do lead.
  */
 export async function listMeetingLeads(profile: Profile, start: string, end: string) {
   mustConfigured();
+
+  // Supabase .or() aceita grupos AND separados por vírgula:
+  // 1) and(lead_date.gte.start, lead_date.lte.end)
+  // 2) and(lead_date.is.null, created_at.gte.startT00:00:00, created_at.lte.endT23:59:59)
+  const or = [
+    `and(lead_date.gte.${start},lead_date.lte.${end})`,
+    `and(lead_date.is.null,created_at.gte.${dayStartISO(start)},created_at.lte.${dayEndISO(end)})`,
+  ].join(",");
+
   const { data, error } = await supabase
     .from("meeting_leads")
     .select("*")
     .eq("profile", profile)
-    .gte("created_at", start + "T00:00:00")
-    .lte("created_at", end + "T23:59:59")
+    .or(or)
+    // ordena por created_at (não dá pra ordenar por coalesce sem view).
     .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  return (data ?? []) as MeetingLead[];
+}
+
+/**
+ * ✅ NOVO: vendas por período usando deal_date (status=venda)
+ *
+ * Use isso nas páginas:
+ *  - Vendas (para contar totalVendas e custo por venda)
+ *  - Visão geral (para receita baseada em deal_value no período)
+ *
+ * Isso resolve "venda só aparece se selecionar 2 meses".
+ */
+export async function listMeetingSales(profile: Profile, start: string, end: string) {
+  mustConfigured();
+
+  const { data, error } = await supabase
+    .from("meeting_leads")
+    .select("*")
+    .eq("profile", profile)
+    .eq("status", "venda")
+    .gte("deal_date", start)
+    .lte("deal_date", end)
+    .order("deal_date", { ascending: false });
 
   if (error) throw error;
   return (data ?? []) as MeetingLead[];
