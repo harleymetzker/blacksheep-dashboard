@@ -28,7 +28,7 @@ function categoryLabel(c: ImportantCategory) {
   if (c === "login") return "Login/Senha";
   if (c === "link") return "Link útil";
   if (c === "material") return "Material";
-  if (c === "procedimento") return "Processos internos";
+  if (c === "procedimento") return "Processos internos"; // ✅ alterado
   return "Outro";
 }
 
@@ -58,7 +58,7 @@ export default function OpsPage() {
     title: "",
     description: "",
     owner: "",
-    due: "",
+    due: "" as string,
     status: "em_andamento" as OpsStatus,
   });
 
@@ -160,6 +160,7 @@ export default function OpsPage() {
   }
 
   async function saveTask() {
+    setErr(null);
     try {
       const payload: Partial<OpsTask> = {
         id: editingTaskId ?? uid(),
@@ -169,36 +170,56 @@ export default function OpsPage() {
         due: taskForm.due ? taskForm.due : null,
         status: taskForm.status,
       };
-      if (!payload.title) return setErr("Título obrigatório.");
+
+      if (!payload.title) {
+        setErr("Título é obrigatório.");
+        return;
+      }
+
       await upsertOps(payload);
       setOpenTaskEdit(false);
-      refresh();
+      await refresh();
     } catch (e: any) {
-      setErr(e?.message ?? "Erro.");
+      setErr(e?.message ?? "Erro ao salvar tarefa.");
     }
   }
 
   async function removeTask(id: string) {
-    if (!confirm("Excluir tarefa?")) return;
-    await deleteOps(id);
-    refresh();
+    if (!confirm("Excluir esta tarefa?")) return;
+    setErr(null);
+    try {
+      await deleteOps(id);
+      await refresh();
+    } catch (e: any) {
+      setErr(e?.message ?? "Erro ao excluir tarefa.");
+    }
   }
 
   async function moveTask(t: OpsTask, next: OpsStatus) {
-    await upsertOps({ id: t.id, status: next });
-    refresh();
+    setErr(null);
+    try {
+      await upsertOps({ id: t.id, status: next });
+      await refresh();
+    } catch (e: any) {
+      setErr(e?.message ?? "Erro ao mover tarefa.");
+    }
   }
 
   function openAddItem() {
     setEditingItemId(null);
-    setItemForm({ category: "link", title: "", description: "", url: "" });
+    setItemForm({
+      category: "link",
+      title: "",
+      description: "",
+      url: "",
+    });
     setOpenItemEdit(true);
   }
 
   function openEditItem(it: OpsImportantItem) {
     setEditingItemId(it.id);
     setItemForm({
-      category: it.category,
+      category: (it.category ?? "link") as ImportantCategory,
       title: it.title ?? "",
       description: it.description ?? "",
       url: it.url ?? "",
@@ -207,21 +228,46 @@ export default function OpsPage() {
   }
 
   async function saveItem() {
-    const payload: Partial<OpsImportantItem> = {
-      id: editingItemId ?? uid(),
-      ...itemForm,
-    };
-    if (!payload.title) return setErr("Título obrigatório.");
-    if (!isValidUrl(payload.url ?? "")) return setErr("Link inválido.");
-    await upsertOpsImportantItem(payload);
-    setOpenItemEdit(false);
-    refresh();
+    setErr(null);
+    try {
+      const payload: Partial<OpsImportantItem> = {
+        id: editingItemId ?? uid(),
+        category: itemForm.category,
+        title: itemForm.title.trim(),
+        description: itemForm.description.trim(),
+        url: itemForm.url.trim(),
+      };
+
+      if (!payload.title) {
+        setErr("Título é obrigatório.");
+        return;
+      }
+      if (!payload.url) {
+        setErr("Link é obrigatório.");
+        return;
+      }
+      if (!isValidUrl(payload.url)) {
+        setErr("Link inválido. Use http:// ou https://");
+        return;
+      }
+
+      await upsertOpsImportantItem(payload);
+      setOpenItemEdit(false);
+      await refresh();
+    } catch (e: any) {
+      setErr(e?.message ?? "Erro ao salvar item.");
+    }
   }
 
   async function removeItem(id: string) {
-    if (!confirm("Excluir item?")) return;
-    await deleteOpsImportantItem(id);
-    refresh();
+    if (!confirm("Excluir este item?")) return;
+    setErr(null);
+    try {
+      await deleteOpsImportantItem(id);
+      await refresh();
+    } catch (e: any) {
+      setErr(e?.message ?? "Erro ao excluir item.");
+    }
   }
 
   function TaskCard({ t }: { t: OpsTask }) {
@@ -230,10 +276,30 @@ export default function OpsPage() {
         className="rounded-3xl border border-slate-800 bg-slate-950/20 p-4 hover:bg-slate-950/30 cursor-pointer"
         onClick={() => openViewTask(t)}
       >
-        <div className="font-semibold">{t.title}</div>
-        <div className="text-xs text-slate-400">
-          {t.owner} {t.due ? `• ${t.due}` : ""}
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="font-semibold truncate">{t.title}</div>
+            <div className="mt-1 text-xs text-slate-400">
+              {t.owner ? `Responsável: ${t.owner}` : "Sem responsável"}
+              {t.due ? ` • Prazo: ${String(t.due).slice(0, 10)}` : ""}
+            </div>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-2">
+            <Button variant="outline" onClick={(e) => { e.stopPropagation(); openEditTask(t); }}>
+              Editar
+            </Button>
+            <Button variant="ghost" onClick={(e) => { e.stopPropagation(); removeTask(t.id); }}>
+              Excluir
+            </Button>
+          </div>
         </div>
+
+        {t.description ? (
+          <div className="mt-3 text-sm text-slate-300 line-clamp-3 whitespace-pre-wrap">{t.description}</div>
+        ) : (
+          <div className="mt-3 text-sm text-slate-500">Sem descrição.</div>
+        )}
       </div>
     );
   }
@@ -241,57 +307,119 @@ export default function OpsPage() {
   function ImportantItemCard({ it }: { it: OpsImportantItem }) {
     return (
       <div className="rounded-3xl border border-slate-800 bg-slate-950/20 p-4">
-        <Pill>{categoryLabel(it.category)}</Pill>
-        <div className="font-semibold mt-2">{it.title}</div>
-        <a href={it.url} target="_blank" className="underline text-sm">
-          Abrir link
-        </a>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <Pill>{categoryLabel(it.category)}</Pill>
+              <div className="font-semibold truncate">{it.title}</div>
+            </div>
+
+            {it.description && (
+              <div className="mt-2 text-sm text-slate-300 whitespace-pre-wrap">{it.description}</div>
+            )}
+
+            <div className="mt-3">
+              <a href={it.url} target="_blank" rel="noreferrer" className="text-sm text-slate-200 underline underline-offset-4">
+                Abrir link
+              </a>
+            </div>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-2">
+            <Button variant="outline" onClick={() => openEditItem(it)}>Editar</Button>
+            <Button variant="ghost" onClick={() => removeItem(it.id)}>Excluir</Button>
+          </div>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="text-lg font-semibold">Operação</div>
-          <div className="text-sm text-slate-400">Kanban + base do time</div>
+          <div className="text-sm text-slate-400">Kanban de tarefas + dados importantes para o time.</div>
         </div>
 
-        {/* ✅ botão duplicado removido */}
-        <Button onClick={openAddTask}>Nova tarefa</Button>
+        {/* ✅ BOTÃO DUPLICADO REMOVIDO — somente Nova tarefa */}
+        <div className="flex flex-wrap items-end gap-2">
+          <Button onClick={openAddTask}>Nova tarefa</Button>
+        </div>
       </div>
 
-      <Card title="Kanban">
-        <div className="grid grid-cols-4 gap-4">
+      {err && (
+        <div className="rounded-3xl border border-red-900/50 bg-red-950/30 px-5 py-4 text-sm text-red-200">{err}</div>
+      )}
+
+      {/* KANBAN */}
+      <Card
+        title="Kanban de tarefas"
+        subtitle="Clique no card para ver a descrição completa. Use Editar para alterar campos."
+        right={loading ? <Pill>carregando…</Pill> : <Pill>ok</Pill>}
+      >
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
           {STATUS_ORDER.map((s) => (
-            <div key={s}>
-              <div className="font-semibold mb-2">{statusLabel(s)}</div>
-              {tasksByStatus[s].map((t) => (
-                <TaskCard key={t.id} t={t} />
-              ))}
+            <div key={s} className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-semibold">{statusLabel(s)}</div>
+                <Pill>{tasksByStatus[s].length}</Pill>
+              </div>
+
+              <div className="space-y-3">
+                {tasksByStatus[s].map((t) => (
+                  <div key={t.id} className="space-y-2">
+                    <TaskCard t={t} />
+                    <div className="flex flex-wrap gap-2">
+                      {STATUS_ORDER.filter((x) => x !== s).map((next) => (
+                        <Button key={next} variant="ghost" onClick={() => moveTask(t, next)}>
+                          Mover → {statusLabel(next)}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+
+                {tasksByStatus[s].length === 0 && (
+                  <div className="rounded-3xl border border-slate-800 bg-slate-950/10 px-4 py-6 text-sm text-slate-500">
+                    Sem tarefas.
+                  </div>
+                )}
+              </div>
             </div>
           ))}
         </div>
       </Card>
 
+      {/* DADOS IMPORTANTES */}
       <Card
         title="Dados importantes"
+        subtitle="Central do time: logins/senhas, links úteis, materiais e processos internos. Apenas links (sem anexos)."
         right={<Button variant="outline" onClick={openAddItem}>Adicionar item</Button>}
       >
-        {["login", "link", "material", "procedimento", "outro"].map((k) => {
-          const arr = itemsByCategory.get(k) ?? [];
-          return (
-            <div key={k} className="mb-6">
-              <div className="font-semibold mb-2">{categoryLabel(k as any)}</div>
-              <div className="grid grid-cols-2 gap-3">
-                {arr.map((it) => (
-                  <ImportantItemCard key={it.id} it={it} />
-                ))}
+        <div className="space-y-6">
+          {["login", "link", "material", "procedimento", "outro"].map((k) => {
+            const arr = itemsByCategory.get(k) ?? [];
+            return (
+              <div key={k} className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-semibold">{categoryLabel(k as any)}</div>
+                  <Pill>{arr.length}</Pill>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                  {arr.map((it) => <ImportantItemCard key={it.id} it={it} />)}
+                </div>
+
+                {arr.length === 0 && (
+                  <div className="rounded-3xl border border-slate-800 bg-slate-950/10 px-4 py-6 text-sm text-slate-500">
+                    Nenhum item nesta categoria.
+                  </div>
+                )}
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </Card>
     </div>
   );
