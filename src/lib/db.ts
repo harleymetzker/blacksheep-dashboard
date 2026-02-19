@@ -37,8 +37,6 @@ export type MeetingLead = {
   avg_revenue: number;
   status: "marcou" | "realizou" | "no_show" | "venda" | "proposta";
   notes: string;
-
-  // campos novos (podem existir ou não na tabela; TS aceita via Partial no upsert)
   lead_date?: string | null;
   deal_value?: number | null;
   deal_date?: string | null;
@@ -73,7 +71,14 @@ export type OpsTask = {
   status: "pausado" | "em_andamento" | "feito" | "arquivado";
 };
 
-/** ✅ Bank balances (tabela bank_balances no Supabase: id, day, balance, notes, created_at) */
+export type OpsImportantItem = {
+  id: string;
+  title: string;
+  category: "login" | "link" | "material" | "outro";
+  content: string;
+  created_at?: string;
+};
+
 export type BankBalanceEntry = {
   id: string;
   day: string;
@@ -82,19 +87,10 @@ export type BankBalanceEntry = {
   created_at?: string;
 };
 
-/* ---------------- Guard ---------------- */
-
 function mustConfigured() {
   if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
-    throw new Error("Supabase não configurado (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).");
+    throw new Error("Supabase não configurado.");
   }
-}
-
-function dayStartISO(d: string) {
-  return `${d}T00:00:00`;
-}
-function dayEndISO(d: string) {
-  return `${d}T23:59:59`;
 }
 
 /* ---------------- Meta Ads ---------------- */
@@ -155,58 +151,16 @@ export async function deleteDailyFunnel(id: string) {
 }
 
 /* ---------------- Meeting Leads ---------------- */
-/**
- * ✅ Agora respeita lead_date.
- *
- * Regra:
- *  - se lead_date existir: filtra por lead_date (YYYY-MM-DD)
- *  - se lead_date estiver null: filtra por created_at (retrocompat)
- *
- * Isso resolve "lead sumindo" quando o usuário escolhe o mês pelo input de data do lead.
- */
+
 export async function listMeetingLeads(profile: Profile, start: string, end: string) {
   mustConfigured();
-
-  // Supabase .or() aceita grupos AND separados por vírgula:
-  // 1) and(lead_date.gte.start, lead_date.lte.end)
-  // 2) and(lead_date.is.null, created_at.gte.startT00:00:00, created_at.lte.endT23:59:59)
-  const or = [
-    `and(lead_date.gte.${start},lead_date.lte.${end})`,
-    `and(lead_date.is.null,created_at.gte.${dayStartISO(start)},created_at.lte.${dayEndISO(end)})`,
-  ].join(",");
-
   const { data, error } = await supabase
     .from("meeting_leads")
     .select("*")
     .eq("profile", profile)
-    .or(or)
-    // ordena por created_at (não dá pra ordenar por coalesce sem view).
+    .gte("created_at", start + "T00:00:00")
+    .lte("created_at", end + "T23:59:59")
     .order("created_at", { ascending: false });
-
-  if (error) throw error;
-  return (data ?? []) as MeetingLead[];
-}
-
-/**
- * ✅ NOVO: vendas por período usando deal_date (status=venda)
- *
- * Use isso nas páginas:
- *  - Vendas (para contar totalVendas e custo por venda)
- *  - Visão geral (para receita baseada em deal_value no período)
- *
- * Isso resolve "venda só aparece se selecionar 2 meses".
- */
-export async function listMeetingSales(profile: Profile, start: string, end: string) {
-  mustConfigured();
-
-  const { data, error } = await supabase
-    .from("meeting_leads")
-    .select("*")
-    .eq("profile", profile)
-    .eq("status", "venda")
-    .gte("deal_date", start)
-    .lte("deal_date", end)
-    .order("deal_date", { ascending: false });
 
   if (error) throw error;
   return (data ?? []) as MeetingLead[];
@@ -254,17 +208,10 @@ export async function deleteFinance(id: string) {
 }
 
 /* ---------------- Bank balances ---------------- */
-/**
- * Lista TODOS os saldos (ordenado desc).
- * A lógica de:
- * - pegar o saldo do dia range.start
- * - ou pegar o último saldo anterior
- * fica na FinancePage.
- */
+
 export async function listBankBalances() {
   mustConfigured();
   const { data, error } = await supabase.from("bank_balances").select("*").order("day", { ascending: false });
-
   if (error) throw error;
   return (data ?? []) as BankBalanceEntry[];
 }
@@ -295,5 +242,31 @@ export async function upsertOps(row: Partial<OpsTask>) {
 export async function deleteOps(id: string) {
   mustConfigured();
   const { error } = await supabase.from("ops_tasks").delete().eq("id", id);
+  if (error) throw error;
+}
+
+/* ---------------- Ops Important Items ---------------- */
+
+export async function listOpsImportantItems() {
+  mustConfigured();
+  const { data, error } = await supabase
+    .from("ops_important_items")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  return (data ?? []) as OpsImportantItem[];
+}
+
+export async function upsertOpsImportantItem(row: Partial<OpsImportantItem>) {
+  mustConfigured();
+  const { data, error } = await supabase.from("ops_important_items").upsert(row).select("*").single();
+  if (error) throw error;
+  return data as OpsImportantItem;
+}
+
+export async function deleteOpsImportantItem(id: string) {
+  mustConfigured();
+  const { error } = await supabase.from("ops_important_items").delete().eq("id", id);
   if (error) throw error;
 }
