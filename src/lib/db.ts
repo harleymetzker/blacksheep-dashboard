@@ -37,6 +37,7 @@ export type MeetingLead = {
   avg_revenue: number;
   status: "marcou" | "realizou" | "no_show" | "venda" | "proposta";
   notes: string;
+
   lead_date?: string | null;
   deal_value?: number | null;
   deal_date?: string | null;
@@ -71,14 +72,6 @@ export type OpsTask = {
   status: "pausado" | "em_andamento" | "feito" | "arquivado";
 };
 
-export type OpsImportantItem = {
-  id: string;
-  title: string;
-  category: "login" | "link" | "material" | "outro";
-  content: string;
-  created_at?: string;
-};
-
 export type BankBalanceEntry = {
   id: string;
   day: string;
@@ -87,9 +80,32 @@ export type BankBalanceEntry = {
   created_at?: string;
 };
 
+export type OpsImportantItem = {
+  id: string;
+  created_at?: string;
+  category: "login" | "link" | "material" | "processos_internos" | "outro";
+  title: string;
+  description: string;
+  url: string;
+};
+
+export type CSClient = {
+  id: string;
+  created_at?: string;
+  entry_date: string;      // yyyy-mm-dd
+  name: string;
+  phone: string;
+  product: string;
+  amount_paid: number;
+  renewal_date: string;    // yyyy-mm-dd
+  renewed: boolean;        // marcador separado
+};
+
+/* ---------------- Guard ---------------- */
+
 function mustConfigured() {
   if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
-    throw new Error("Supabase não configurado.");
+    throw new Error("Supabase não configurado (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).");
   }
 }
 
@@ -268,5 +284,31 @@ export async function upsertOpsImportantItem(row: Partial<OpsImportantItem>) {
 export async function deleteOpsImportantItem(id: string) {
   mustConfigured();
   const { error } = await supabase.from("ops_important_items").delete().eq("id", id);
+  if (error) throw error;
+}
+
+/* ---------------- Customer Success Clients ---------------- */
+
+export async function listCSClients() {
+  mustConfigured();
+  const { data, error } = await supabase
+    .from("cs_clients")
+    .select("*")
+    .order("renewal_date", { ascending: true });
+
+  if (error) throw error;
+  return (data ?? []) as CSClient[];
+}
+
+export async function upsertCSClient(row: Partial<CSClient>) {
+  mustConfigured();
+  const { data, error } = await supabase.from("cs_clients").upsert(row).select("*").single();
+  if (error) throw error;
+  return data as CSClient;
+}
+
+export async function deleteCSClient(id: string) {
+  mustConfigured();
+  const { error } = await supabase.from("cs_clients").delete().eq("id", id);
   if (error) throw error;
 }
