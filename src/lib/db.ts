@@ -36,7 +36,7 @@ export type MeetingLead = {
   status: "marcou" | "realizou" | "no_show" | "venda" | "proposta";
   notes: string;
 
-  // novos campos (podem existir ou não na tabela; TS aceita via Partial no upsert)
+  // campos novos (podem existir ou não na tabela; TS aceita via Partial no upsert)
   lead_date?: string | null;
   deal_value?: number | null;
   deal_date?: string | null;
@@ -71,15 +71,12 @@ export type OpsTask = {
   status: "pausado" | "em_andamento" | "feito" | "arquivado";
 };
 
-/** ✅ NOVO: saldo bancário por período (compartilhado no Supabase) */
+/** ✅ Bank balances (tabela bank_balances no Supabase: id, day, balance, notes, created_at) */
 export type BankBalanceEntry = {
   id: string;
-  start_date: string;
-  end_date: string;
-  // saldo atual no banco (manual)
+  day: string;
   balance: number;
-  // opcional: saldo inicial manual se você tiver criado essa coluna
-  opening_balance?: number | null;
+  notes?: string | null;
   created_at?: string;
 };
 
@@ -89,6 +86,8 @@ function mustConfigured() {
   }
 }
 
+/* ---------------- Meta Ads ---------------- */
+
 export async function listMetaAds(start: string, end: string) {
   mustConfigured();
   const { data, error } = await supabase
@@ -97,6 +96,7 @@ export async function listMetaAds(start: string, end: string) {
     .gte("start_date", start)
     .lte("end_date", end)
     .order("start_date", { ascending: false });
+
   if (error) throw error;
   return (data ?? []) as MetaAdsEntry[];
 }
@@ -114,6 +114,8 @@ export async function deleteMetaAds(id: string) {
   if (error) throw error;
 }
 
+/* ---------------- Daily Funnel ---------------- */
+
 export async function listDailyFunnel(profile: Profile, start: string, end: string) {
   mustConfigured();
   const { data, error } = await supabase
@@ -123,6 +125,7 @@ export async function listDailyFunnel(profile: Profile, start: string, end: stri
     .gte("day", start)
     .lte("day", end)
     .order("day", { ascending: false });
+
   if (error) throw error;
   return (data ?? []) as DailyFunnel[];
 }
@@ -140,17 +143,23 @@ export async function deleteDailyFunnel(id: string) {
   if (error) throw error;
 }
 
+/* ---------------- Meeting Leads ---------------- */
+/**
+ * IMPORTANTE:
+ * Esta função ainda filtra por created_at (retrocompat).
+ * Se você quiser que a página Leads respeite lead_date, isso precisa mudar aqui
+ * (mas eu não mexo agora sem você pedir, porque afeta outras páginas).
+ */
 export async function listMeetingLeads(profile: Profile, start: string, end: string) {
   mustConfigured();
   const { data, error } = await supabase
     .from("meeting_leads")
     .select("*")
     .eq("profile", profile)
-    // mantém por created_at (para retrocompat). Se você migrou para lead_date,
-    // a página de Leads usa lead_date na UI, mas aqui continua ok para filtrar mês.
     .gte("created_at", start + "T00:00:00")
     .lte("created_at", end + "T23:59:59")
     .order("created_at", { ascending: false });
+
   if (error) throw error;
   return (data ?? []) as MeetingLead[];
 }
@@ -168,6 +177,8 @@ export async function deleteMeetingLead(id: string) {
   if (error) throw error;
 }
 
+/* ---------------- Finance ---------------- */
+
 export async function listFinance(start: string, end: string) {
   mustConfigured();
   const { data, error } = await supabase
@@ -176,6 +187,7 @@ export async function listFinance(start: string, end: string) {
     .gte("day", start)
     .lte("day", end)
     .order("day", { ascending: false });
+
   if (error) throw error;
   return (data ?? []) as FinanceEntry[];
 }
@@ -193,15 +205,18 @@ export async function deleteFinance(id: string) {
   if (error) throw error;
 }
 
-/** ✅ NOVO: Bank balances (precisa existir tabela bank_balances) */
-export async function listBankBalances(start: string, end: string) {
+/* ---------------- Bank balances ---------------- */
+/**
+ * Lista TODOS os saldos (ordenado desc).
+ * A lógica de:
+ * - pegar o saldo do dia range.start
+ * - ou pegar o último saldo anterior
+ * fica na FinancePage.
+ */
+export async function listBankBalances() {
   mustConfigured();
-  const { data, error } = await supabase
-    .from("bank_balances")
-    .select("*")
-    .eq("start_date", start)
-    .eq("end_date", end)
-    .order("created_at", { ascending: false });
+  const { data, error } = await supabase.from("bank_balances").select("*").order("day", { ascending: false });
+
   if (error) throw error;
   return (data ?? []) as BankBalanceEntry[];
 }
@@ -212,6 +227,8 @@ export async function upsertBankBalance(row: Partial<BankBalanceEntry>) {
   if (error) throw error;
   return data as BankBalanceEntry;
 }
+
+/* ---------------- Ops Tasks ---------------- */
 
 export async function listOps() {
   mustConfigured();
