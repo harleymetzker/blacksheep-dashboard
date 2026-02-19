@@ -28,7 +28,7 @@ function categoryLabel(c: ImportantCategory) {
   if (c === "login") return "Login/Senha";
   if (c === "link") return "Link útil";
   if (c === "material") return "Material";
-  if (c === "procedimento") return "Procedimento";
+  if (c === "procedimento") return "Processos internos";
   return "Outro";
 }
 
@@ -48,11 +48,9 @@ export default function OpsPage() {
   const [tasks, setTasks] = useState<OpsTask[]>([]);
   const [items, setItems] = useState<OpsImportantItem[]>([]);
 
-  // ---------- Tasks: view modal ----------
   const [openTaskView, setOpenTaskView] = useState(false);
   const [viewTask, setViewTask] = useState<OpsTask | null>(null);
 
-  // ---------- Tasks: add/edit modal ----------
   const [openTaskEdit, setOpenTaskEdit] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
 
@@ -60,11 +58,10 @@ export default function OpsPage() {
     title: "",
     description: "",
     owner: "",
-    due: "" as string, // ISO yyyy-mm-dd
+    due: "",
     status: "em_andamento" as OpsStatus,
   });
 
-  // ---------- Important items: add/edit modal ----------
   const [openItemEdit, setOpenItemEdit] = useState(false);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
 
@@ -106,7 +103,6 @@ export default function OpsPage() {
       map[s].push(t);
     }
 
-    // ordena: com due primeiro, depois created_at desc
     for (const s of STATUS_ORDER) {
       map[s] = map[s].slice().sort((a, b) => {
         const ad = a.due ? String(a.due) : "9999-12-31";
@@ -125,7 +121,6 @@ export default function OpsPage() {
       const c = String(it.category || "outro");
       map.set(c, [...(map.get(c) ?? []), it]);
     }
-    // sort by created_at desc
     for (const [k, arr] of map.entries()) {
       map.set(
         k,
@@ -135,7 +130,6 @@ export default function OpsPage() {
     return map;
   }, [items]);
 
-  // ---------- Task actions ----------
   function openAddTask() {
     setEditingTaskId(null);
     setTaskForm({
@@ -166,7 +160,6 @@ export default function OpsPage() {
   }
 
   async function saveTask() {
-    setErr(null);
     try {
       const payload: Partial<OpsTask> = {
         id: editingTaskId ?? uid(),
@@ -176,57 +169,36 @@ export default function OpsPage() {
         due: taskForm.due ? taskForm.due : null,
         status: taskForm.status,
       };
-
-      if (!payload.title) {
-        setErr("Título é obrigatório.");
-        return;
-      }
-
+      if (!payload.title) return setErr("Título obrigatório.");
       await upsertOps(payload);
       setOpenTaskEdit(false);
-      await refresh();
+      refresh();
     } catch (e: any) {
-      setErr(e?.message ?? "Erro ao salvar tarefa.");
+      setErr(e?.message ?? "Erro.");
     }
   }
 
   async function removeTask(id: string) {
-    if (!confirm("Excluir esta tarefa?")) return;
-    setErr(null);
-    try {
-      await deleteOps(id);
-      await refresh();
-    } catch (e: any) {
-      setErr(e?.message ?? "Erro ao excluir tarefa.");
-    }
+    if (!confirm("Excluir tarefa?")) return;
+    await deleteOps(id);
+    refresh();
   }
 
   async function moveTask(t: OpsTask, next: OpsStatus) {
-    setErr(null);
-    try {
-      await upsertOps({ id: t.id, status: next });
-      await refresh();
-    } catch (e: any) {
-      setErr(e?.message ?? "Erro ao mover tarefa.");
-    }
+    await upsertOps({ id: t.id, status: next });
+    refresh();
   }
 
-  // ---------- Important items actions ----------
   function openAddItem() {
     setEditingItemId(null);
-    setItemForm({
-      category: "link",
-      title: "",
-      description: "",
-      url: "",
-    });
+    setItemForm({ category: "link", title: "", description: "", url: "" });
     setOpenItemEdit(true);
   }
 
   function openEditItem(it: OpsImportantItem) {
     setEditingItemId(it.id);
     setItemForm({
-      category: (it.category ?? "link") as ImportantCategory,
+      category: it.category,
       title: it.title ?? "",
       description: it.description ?? "",
       url: it.url ?? "",
@@ -235,93 +207,33 @@ export default function OpsPage() {
   }
 
   async function saveItem() {
-    setErr(null);
-    try {
-      const payload: Partial<OpsImportantItem> = {
-        id: editingItemId ?? uid(),
-        category: itemForm.category,
-        title: itemForm.title.trim(),
-        description: itemForm.description.trim(),
-        url: itemForm.url.trim(),
-      };
-
-      if (!payload.title) {
-        setErr("Título é obrigatório.");
-        return;
-      }
-      if (!payload.url) {
-        setErr("Link é obrigatório.");
-        return;
-      }
-      if (!isValidUrl(payload.url)) {
-        setErr("Link inválido. Use http:// ou https://");
-        return;
-      }
-
-      await upsertOpsImportantItem(payload);
-      setOpenItemEdit(false);
-      await refresh();
-    } catch (e: any) {
-      setErr(e?.message ?? "Erro ao salvar item.");
-    }
+    const payload: Partial<OpsImportantItem> = {
+      id: editingItemId ?? uid(),
+      ...itemForm,
+    };
+    if (!payload.title) return setErr("Título obrigatório.");
+    if (!isValidUrl(payload.url ?? "")) return setErr("Link inválido.");
+    await upsertOpsImportantItem(payload);
+    setOpenItemEdit(false);
+    refresh();
   }
 
   async function removeItem(id: string) {
-    if (!confirm("Excluir este item?")) return;
-    setErr(null);
-    try {
-      await deleteOpsImportantItem(id);
-      await refresh();
-    } catch (e: any) {
-      setErr(e?.message ?? "Erro ao excluir item.");
-    }
+    if (!confirm("Excluir item?")) return;
+    await deleteOpsImportantItem(id);
+    refresh();
   }
 
-  // ---------- UI helpers ----------
   function TaskCard({ t }: { t: OpsTask }) {
     return (
       <div
         className="rounded-3xl border border-slate-800 bg-slate-950/20 p-4 hover:bg-slate-950/30 cursor-pointer"
         onClick={() => openViewTask(t)}
-        role="button"
-        tabIndex={0}
       >
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="font-semibold truncate">{t.title}</div>
-            <div className="mt-1 text-xs text-slate-400">
-              {t.owner ? `Responsável: ${t.owner}` : "Sem responsável"}
-              {t.due ? ` • Prazo: ${String(t.due).slice(0, 10)}` : ""}
-            </div>
-          </div>
-
-          <div className="flex shrink-0 items-center gap-2">
-            <Button
-              variant="outline"
-              onClick={(e) => {
-                e.stopPropagation();
-                openEditTask(t);
-              }}
-            >
-              Editar
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={(e) => {
-                e.stopPropagation();
-                removeTask(t.id);
-              }}
-            >
-              Excluir
-            </Button>
-          </div>
+        <div className="font-semibold">{t.title}</div>
+        <div className="text-xs text-slate-400">
+          {t.owner} {t.due ? `• ${t.due}` : ""}
         </div>
-
-        {t.description ? (
-          <div className="mt-3 text-sm text-slate-300 line-clamp-3 whitespace-pre-wrap">{t.description}</div>
-        ) : (
-          <div className="mt-3 text-sm text-slate-500">Sem descrição.</div>
-        )}
       </div>
     );
   }
@@ -329,297 +241,58 @@ export default function OpsPage() {
   function ImportantItemCard({ it }: { it: OpsImportantItem }) {
     return (
       <div className="rounded-3xl border border-slate-800 bg-slate-950/20 p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <Pill>{categoryLabel(it.category)}</Pill>
-              <div className="font-semibold truncate">{it.title}</div>
-            </div>
-
-            {it.description ? (
-              <div className="mt-2 text-sm text-slate-300 whitespace-pre-wrap">{it.description}</div>
-            ) : null}
-
-            <div className="mt-3">
-              <a
-                href={it.url}
-                target="_blank"
-                rel="noreferrer"
-                className="text-sm text-slate-200 underline underline-offset-4"
-              >
-                Abrir link
-              </a>
-            </div>
-          </div>
-
-          <div className="flex shrink-0 items-center gap-2">
-            <Button variant="outline" onClick={() => openEditItem(it)}>
-              Editar
-            </Button>
-            <Button variant="ghost" onClick={() => removeItem(it.id)}>
-              Excluir
-            </Button>
-          </div>
-        </div>
+        <Pill>{categoryLabel(it.category)}</Pill>
+        <div className="font-semibold mt-2">{it.title}</div>
+        <a href={it.url} target="_blank" className="underline text-sm">
+          Abrir link
+        </a>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
+      <div className="flex justify-between">
         <div>
           <div className="text-lg font-semibold">Operação</div>
-          <div className="text-sm text-slate-400">Kanban de tarefas + dados importantes para o time.</div>
+          <div className="text-sm text-slate-400">Kanban + base do time</div>
         </div>
 
-        <div className="flex flex-wrap items-end gap-2">
-          <Button onClick={openAddTask}>Nova tarefa</Button>
-          <Button variant="outline" onClick={openAddItem}>
-            Adicionar item (Dados importantes)
-          </Button>
-        </div>
+        {/* ✅ botão duplicado removido */}
+        <Button onClick={openAddTask}>Nova tarefa</Button>
       </div>
 
-      {err ? (
-        <div className="rounded-3xl border border-red-900/50 bg-red-950/30 px-5 py-4 text-sm text-red-200">
-          {err}
-        </div>
-      ) : null}
-
-      {/* KANBAN */}
-      <Card
-        title="Kanban de tarefas"
-        subtitle="Clique no card para ver a descrição completa. Use Editar para alterar campos."
-        right={loading ? <Pill>carregando…</Pill> : <Pill>ok</Pill>}
-      >
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+      <Card title="Kanban">
+        <div className="grid grid-cols-4 gap-4">
           {STATUS_ORDER.map((s) => (
-            <div key={s} className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="text-sm font-semibold">{statusLabel(s)}</div>
-                <Pill>{tasksByStatus[s].length}</Pill>
-              </div>
-
-              <div className="space-y-3">
-                {tasksByStatus[s].map((t) => (
-                  <div key={t.id} className="space-y-2">
-                    <TaskCard t={t} />
-
-                    <div className="flex flex-wrap gap-2">
-                      {STATUS_ORDER.filter((x) => x !== s).map((next) => (
-                        <Button
-                          key={next}
-                          variant="ghost"
-                          onClick={() => moveTask(t, next)}
-                        >
-                          Mover → {statusLabel(next)}
-                        </Button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-
-                {tasksByStatus[s].length === 0 ? (
-                  <div className="rounded-3xl border border-slate-800 bg-slate-950/10 px-4 py-6 text-sm text-slate-500">
-                    Sem tarefas.
-                  </div>
-                ) : null}
-              </div>
+            <div key={s}>
+              <div className="font-semibold mb-2">{statusLabel(s)}</div>
+              {tasksByStatus[s].map((t) => (
+                <TaskCard key={t.id} t={t} />
+              ))}
             </div>
           ))}
         </div>
       </Card>
 
-      {/* DADOS IMPORTANTES */}
       <Card
         title="Dados importantes"
-        subtitle="Central do time: logins/senhas, links úteis, materiais e procedimentos. Apenas links (sem anexos)."
         right={<Button variant="outline" onClick={openAddItem}>Adicionar item</Button>}
       >
-        <div className="space-y-6">
-          {["login", "link", "material", "procedimento", "outro"].map((k) => {
-            const arr = itemsByCategory.get(k) ?? [];
-            return (
-              <div key={k} className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold">{categoryLabel(k as any)}</div>
-                  <Pill>{arr.length}</Pill>
-                </div>
-
-                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                  {arr.map((it) => (
-                    <ImportantItemCard key={it.id} it={it} />
-                  ))}
-                </div>
-
-                {arr.length === 0 ? (
-                  <div className="rounded-3xl border border-slate-800 bg-slate-950/10 px-4 py-6 text-sm text-slate-500">
-                    Nenhum item nesta categoria.
-                  </div>
-                ) : null}
+        {["login", "link", "material", "procedimento", "outro"].map((k) => {
+          const arr = itemsByCategory.get(k) ?? [];
+          return (
+            <div key={k} className="mb-6">
+              <div className="font-semibold mb-2">{categoryLabel(k as any)}</div>
+              <div className="grid grid-cols-2 gap-3">
+                {arr.map((it) => (
+                  <ImportantItemCard key={it.id} it={it} />
+                ))}
               </div>
-            );
-          })}
-        </div>
+            </div>
+          );
+        })}
       </Card>
-
-      {/* MODAL: VIEW TASK */}
-      <Modal
-        open={openTaskView}
-        title={viewTask?.title ?? "Tarefa"}
-        subtitle={viewTask?.owner ? `Responsável: ${viewTask.owner}` : "Sem responsável"}
-        onClose={() => {
-          setOpenTaskView(false);
-          setViewTask(null);
-        }}
-      >
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <Pill>{viewTask?.status ? statusLabel(viewTask.status) : "—"}</Pill>
-            {viewTask?.due ? <Pill>Prazo: {String(viewTask.due).slice(0, 10)}</Pill> : <Pill>Sem prazo</Pill>}
-          </div>
-
-          <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
-            <div className="text-sm font-semibold">Descrição</div>
-            <div className="mt-2 text-sm text-slate-300 whitespace-pre-wrap">
-              {viewTask?.description ? viewTask.description : "Sem descrição."}
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              onClick={() => {
-                if (!viewTask) return;
-                setOpenTaskView(false);
-                openEditTask(viewTask);
-              }}
-            >
-              Editar
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                if (!viewTask) return;
-                setOpenTaskView(false);
-                removeTask(viewTask.id);
-              }}
-            >
-              Excluir
-            </Button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* MODAL: ADD/EDIT TASK */}
-      <Modal
-        open={openTaskEdit}
-        title={editingTaskId ? "Editar tarefa" : "Nova tarefa"}
-        subtitle="Preencha os campos. Clique no card para visualizar."
-        onClose={() => setOpenTaskEdit(false)}
-      >
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <div className="md:col-span-2">
-              <Label>Título</Label>
-              <Input value={taskForm.title} onChange={(e) => setTaskForm((s) => ({ ...s, title: e.target.value }))} />
-            </div>
-
-            <div>
-              <Label>Responsável</Label>
-              <Input value={taskForm.owner} onChange={(e) => setTaskForm((s) => ({ ...s, owner: e.target.value }))} />
-            </div>
-
-            <div>
-              <Label>Prazo</Label>
-              <Input type="date" value={taskForm.due} onChange={(e) => setTaskForm((s) => ({ ...s, due: e.target.value }))} />
-            </div>
-
-            <div className="md:col-span-2">
-              <Label>Status</Label>
-              <Select value={taskForm.status} onChange={(e) => setTaskForm((s) => ({ ...s, status: e.target.value as OpsStatus }))}>
-                <option value="pausado">Pausado</option>
-                <option value="em_andamento">Em andamento</option>
-                <option value="feito">Feito</option>
-                <option value="arquivado">Arquivado</option>
-              </Select>
-            </div>
-
-            <div className="md:col-span-2">
-              <Label>Descrição</Label>
-              <Input
-                value={taskForm.description}
-                onChange={(e) => setTaskForm((s) => ({ ...s, description: e.target.value }))}
-                placeholder="Detalhes da tarefa"
-              />
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setOpenTaskEdit(false)}>
-              Cancelar
-            </Button>
-            <Button onClick={saveTask}>{editingTaskId ? "Salvar alterações" : "Salvar tarefa"}</Button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* MODAL: ADD/EDIT IMPORTANT ITEM */}
-      <Modal
-        open={openItemEdit}
-        title={editingItemId ? "Editar item (Dados importantes)" : "Adicionar item (Dados importantes)"}
-        subtitle="Somente links (sem anexos)."
-        onClose={() => setOpenItemEdit(false)}
-      >
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <div className="md:col-span-2">
-              <Label>Categoria</Label>
-              <Select
-                value={itemForm.category}
-                onChange={(e) => setItemForm((s) => ({ ...s, category: e.target.value as ImportantCategory }))}
-              >
-                <option value="login">Login/Senha</option>
-                <option value="link">Link útil</option>
-                <option value="material">Material</option>
-                <option value="procedimento">Procedimento</option>
-                <option value="outro">Outro</option>
-              </Select>
-            </div>
-
-            <div className="md:col-span-2">
-              <Label>Título</Label>
-              <Input value={itemForm.title} onChange={(e) => setItemForm((s) => ({ ...s, title: e.target.value }))} />
-            </div>
-
-            <div className="md:col-span-2">
-              <Label>Descrição (opcional)</Label>
-              <Input
-                value={itemForm.description}
-                onChange={(e) => setItemForm((s) => ({ ...s, description: e.target.value }))}
-                placeholder="Contexto, instruções, observações"
-              />
-            </div>
-
-            <div className="md:col-span-2">
-              <Label>Link</Label>
-              <Input
-                value={itemForm.url}
-                onChange={(e) => setItemForm((s) => ({ ...s, url: e.target.value }))}
-                placeholder="https://..."
-              />
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setOpenItemEdit(false)}>
-              Cancelar
-            </Button>
-            <Button onClick={saveItem}>{editingItemId ? "Salvar alterações" : "Salvar item"}</Button>
-          </div>
-        </div>
-      </Modal>
     </div>
   );
 }
