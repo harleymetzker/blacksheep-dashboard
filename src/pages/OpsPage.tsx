@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Button, Card, Input, Label, Modal, Select, Pill } from "../components/ui";
-import { todayISO, uid } from "../lib/utils";
+import { uid } from "../lib/utils";
 import {
   OpsTask,
   deleteOps,
@@ -48,9 +48,11 @@ export default function OpsPage() {
   const [tasks, setTasks] = useState<OpsTask[]>([]);
   const [items, setItems] = useState<OpsImportantItem[]>([]);
 
+  // ---------- Tasks: view modal ----------
   const [openTaskView, setOpenTaskView] = useState(false);
   const [viewTask, setViewTask] = useState<OpsTask | null>(null);
 
+  // ---------- Tasks: add/edit modal ----------
   const [openTaskEdit, setOpenTaskEdit] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
 
@@ -58,10 +60,11 @@ export default function OpsPage() {
     title: "",
     description: "",
     owner: "",
-    due: "" as string,
+    due: "" as string, // ISO yyyy-mm-dd
     status: "em_andamento" as OpsStatus,
   });
 
+  // ---------- Important items: add/edit modal ----------
   const [openItemEdit, setOpenItemEdit] = useState(false);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
 
@@ -103,6 +106,7 @@ export default function OpsPage() {
       map[s].push(t);
     }
 
+    // ordena: com due primeiro, depois created_at desc
     for (const s of STATUS_ORDER) {
       map[s] = map[s].slice().sort((a, b) => {
         const ad = a.due ? String(a.due) : "9999-12-31";
@@ -121,6 +125,7 @@ export default function OpsPage() {
       const c = String(it.category || "outro");
       map.set(c, [...(map.get(c) ?? []), it]);
     }
+    // sort by created_at desc
     for (const [k, arr] of map.entries()) {
       map.set(
         k,
@@ -130,6 +135,7 @@ export default function OpsPage() {
     return map;
   }, [items]);
 
+  // ---------- Task actions ----------
   function openAddTask() {
     setEditingTaskId(null);
     setTaskForm({
@@ -205,6 +211,7 @@ export default function OpsPage() {
     }
   }
 
+  // ---------- Important items actions ----------
   function openAddItem() {
     setEditingItemId(null);
     setItemForm({
@@ -270,11 +277,14 @@ export default function OpsPage() {
     }
   }
 
+  // ---------- UI helpers ----------
   function TaskCard({ t }: { t: OpsTask }) {
     return (
       <div
         className="rounded-3xl border border-slate-800 bg-slate-950/20 p-4 hover:bg-slate-950/30 cursor-pointer"
         onClick={() => openViewTask(t)}
+        role="button"
+        tabIndex={0}
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -286,10 +296,22 @@ export default function OpsPage() {
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
-            <Button variant="outline" onClick={(e) => { e.stopPropagation(); openEditTask(t); }}>
+            <Button
+              variant="outline"
+              onClick={(e) => {
+                e.stopPropagation();
+                openEditTask(t);
+              }}
+            >
               Editar
             </Button>
-            <Button variant="ghost" onClick={(e) => { e.stopPropagation(); removeTask(t.id); }}>
+            <Button
+              variant="ghost"
+              onClick={(e) => {
+                e.stopPropagation();
+                removeTask(t.id);
+              }}
+            >
               Excluir
             </Button>
           </div>
@@ -314,20 +336,29 @@ export default function OpsPage() {
               <div className="font-semibold truncate">{it.title}</div>
             </div>
 
-            {it.description && (
+            {it.description ? (
               <div className="mt-2 text-sm text-slate-300 whitespace-pre-wrap">{it.description}</div>
-            )}
+            ) : null}
 
             <div className="mt-3">
-              <a href={it.url} target="_blank" rel="noreferrer" className="text-sm text-slate-200 underline underline-offset-4">
+              <a
+                href={it.url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-sm text-slate-200 underline underline-offset-4"
+              >
                 Abrir link
               </a>
             </div>
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
-            <Button variant="outline" onClick={() => openEditItem(it)}>Editar</Button>
-            <Button variant="ghost" onClick={() => removeItem(it.id)}>Excluir</Button>
+            <Button variant="outline" onClick={() => openEditItem(it)}>
+              Editar
+            </Button>
+            <Button variant="ghost" onClick={() => removeItem(it.id)}>
+              Excluir
+            </Button>
           </div>
         </div>
       </div>
@@ -342,15 +373,17 @@ export default function OpsPage() {
           <div className="text-sm text-slate-400">Kanban de tarefas + dados importantes para o time.</div>
         </div>
 
-        {/* ✅ BOTÃO DUPLICADO REMOVIDO — somente Nova tarefa */}
+        {/* ✅ ALTERAÇÃO 1: remover o botão duplicado do topo (fica só Nova tarefa aqui) */}
         <div className="flex flex-wrap items-end gap-2">
           <Button onClick={openAddTask}>Nova tarefa</Button>
         </div>
       </div>
 
-      {err && (
-        <div className="rounded-3xl border border-red-900/50 bg-red-950/30 px-5 py-4 text-sm text-red-200">{err}</div>
-      )}
+      {err ? (
+        <div className="rounded-3xl border border-red-900/50 bg-red-950/30 px-5 py-4 text-sm text-red-200">
+          {err}
+        </div>
+      ) : null}
 
       {/* KANBAN */}
       <Card
@@ -370,6 +403,7 @@ export default function OpsPage() {
                 {tasksByStatus[s].map((t) => (
                   <div key={t.id} className="space-y-2">
                     <TaskCard t={t} />
+
                     <div className="flex flex-wrap gap-2">
                       {STATUS_ORDER.filter((x) => x !== s).map((next) => (
                         <Button key={next} variant="ghost" onClick={() => moveTask(t, next)}>
@@ -380,11 +414,11 @@ export default function OpsPage() {
                   </div>
                 ))}
 
-                {tasksByStatus[s].length === 0 && (
+                {tasksByStatus[s].length === 0 ? (
                   <div className="rounded-3xl border border-slate-800 bg-slate-950/10 px-4 py-6 text-sm text-slate-500">
                     Sem tarefas.
                   </div>
-                )}
+                ) : null}
               </div>
             </div>
           ))}
@@ -395,7 +429,11 @@ export default function OpsPage() {
       <Card
         title="Dados importantes"
         subtitle="Central do time: logins/senhas, links úteis, materiais e processos internos. Apenas links (sem anexos)."
-        right={<Button variant="outline" onClick={openAddItem}>Adicionar item</Button>}
+        right={
+          <Button variant="outline" onClick={openAddItem}>
+            Adicionar item
+          </Button>
+        }
       >
         <div className="space-y-6">
           {["login", "link", "material", "procedimento", "outro"].map((k) => {
@@ -408,19 +446,185 @@ export default function OpsPage() {
                 </div>
 
                 <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                  {arr.map((it) => <ImportantItemCard key={it.id} it={it} />)}
+                  {arr.map((it) => (
+                    <ImportantItemCard key={it.id} it={it} />
+                  ))}
                 </div>
 
-                {arr.length === 0 && (
+                {arr.length === 0 ? (
                   <div className="rounded-3xl border border-slate-800 bg-slate-950/10 px-4 py-6 text-sm text-slate-500">
                     Nenhum item nesta categoria.
                   </div>
-                )}
+                ) : null}
               </div>
             );
           })}
         </div>
       </Card>
+
+      {/* MODAL: VIEW TASK */}
+      <Modal
+        open={openTaskView}
+        title={viewTask?.title ?? "Tarefa"}
+        subtitle={viewTask?.owner ? `Responsável: ${viewTask.owner}` : "Sem responsável"}
+        onClose={() => {
+          setOpenTaskView(false);
+          setViewTask(null);
+        }}
+      >
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <Pill>{viewTask?.status ? statusLabel(viewTask.status) : "—"}</Pill>
+            {viewTask?.due ? <Pill>Prazo: {String(viewTask.due).slice(0, 10)}</Pill> : <Pill>Sem prazo</Pill>}
+          </div>
+
+          <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
+            <div className="text-sm font-semibold">Descrição</div>
+            <div className="mt-2 text-sm text-slate-300 whitespace-pre-wrap">
+              {viewTask?.description ? viewTask.description : "Sem descrição."}
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (!viewTask) return;
+                setOpenTaskView(false);
+                openEditTask(viewTask);
+              }}
+            >
+              Editar
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                if (!viewTask) return;
+                setOpenTaskView(false);
+                removeTask(viewTask.id);
+              }}
+            >
+              Excluir
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* MODAL: ADD/EDIT TASK */}
+      <Modal
+        open={openTaskEdit}
+        title={editingTaskId ? "Editar tarefa" : "Nova tarefa"}
+        subtitle="Preencha os campos. Clique no card para visualizar."
+        onClose={() => setOpenTaskEdit(false)}
+      >
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="md:col-span-2">
+              <Label>Título</Label>
+              <Input value={taskForm.title} onChange={(e) => setTaskForm((s) => ({ ...s, title: e.target.value }))} />
+            </div>
+
+            <div>
+              <Label>Responsável</Label>
+              <Input value={taskForm.owner} onChange={(e) => setTaskForm((s) => ({ ...s, owner: e.target.value }))} />
+            </div>
+
+            <div>
+              <Label>Prazo</Label>
+              <Input
+                type="date"
+                value={taskForm.due}
+                onChange={(e) => setTaskForm((s) => ({ ...s, due: e.target.value }))}
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <Label>Status</Label>
+              <Select
+                value={taskForm.status}
+                onChange={(e) => setTaskForm((s) => ({ ...s, status: e.target.value as OpsStatus }))}
+              >
+                <option value="pausado">Pausado</option>
+                <option value="em_andamento">Em andamento</option>
+                <option value="feito">Feito</option>
+                <option value="arquivado">Arquivado</option>
+              </Select>
+            </div>
+
+            <div className="md:col-span-2">
+              <Label>Descrição</Label>
+              <Input
+                value={taskForm.description}
+                onChange={(e) => setTaskForm((s) => ({ ...s, description: e.target.value }))}
+                placeholder="Detalhes da tarefa"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setOpenTaskEdit(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={saveTask}>{editingTaskId ? "Salvar alterações" : "Salvar tarefa"}</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* MODAL: ADD/EDIT IMPORTANT ITEM */}
+      <Modal
+        open={openItemEdit}
+        title={editingItemId ? "Editar item (Dados importantes)" : "Adicionar item (Dados importantes)"}
+        subtitle="Somente links (sem anexos)."
+        onClose={() => setOpenItemEdit(false)}
+      >
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="md:col-span-2">
+              <Label>Categoria</Label>
+              <Select
+                value={itemForm.category}
+                onChange={(e) => setItemForm((s) => ({ ...s, category: e.target.value as ImportantCategory }))}
+              >
+                <option value="login">Login/Senha</option>
+                <option value="link">Link útil</option>
+                <option value="material">Material</option>
+                <option value="procedimento">Processos internos</option> {/* ✅ alterado */}
+                <option value="outro">Outro</option>
+              </Select>
+            </div>
+
+            <div className="md:col-span-2">
+              <Label>Título</Label>
+              <Input value={itemForm.title} onChange={(e) => setItemForm((s) => ({ ...s, title: e.target.value }))} />
+            </div>
+
+            <div className="md:col-span-2">
+              <Label>Descrição (opcional)</Label>
+              <Input
+                value={itemForm.description}
+                onChange={(e) => setItemForm((s) => ({ ...s, description: e.target.value }))}
+                placeholder="Contexto, instruções, observações"
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <Label>Link</Label>
+              <Input
+                value={itemForm.url}
+                onChange={(e) => setItemForm((s) => ({ ...s, url: e.target.value }))}
+                placeholder="https://..."
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setOpenItemEdit(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={saveItem}>{editingItemId ? "Salvar alterações" : "Salvar item"}</Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
