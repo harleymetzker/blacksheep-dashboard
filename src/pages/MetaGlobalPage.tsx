@@ -1,12 +1,15 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Card, Stat, Pill } from "../components/ui";
 import { brl, safeDiv, todayISO } from "../lib/utils";
+import {
+  listMeetingLeads,
+  listMetaAds,
+  listOpsCustomers,
+  listOpsCustomerRenewals,
+} from "../lib/db";
 import { Profile } from "../lib/utils";
-import { listMeetingLeads, listMetaAds, listOpsCustomers, listOpsCustomerRenewals } from "../lib/db";
 
 // ====== CONFIG FIXA (2026) ======
-const YEAR = 2026;
-
 const GOALS_2026 = {
   revenueAnnual: 1_000_000, // R$ 1 mi
   companiesAnnual: 125, // 125 empresas
@@ -16,7 +19,6 @@ const GOALS_2026 = {
   renewalsPct: 70, // 70%
 };
 
-// util
 function clampPct(n: number) {
   if (!Number.isFinite(n)) return 0;
   if (n < 0) return 0;
@@ -26,32 +28,49 @@ function clampPct(n: number) {
 function pctFmt(n: number) {
   return `${clampPct(n).toFixed(1)}%`;
 }
+
 function iso10(v?: string | null) {
   if (!v) return "";
   return String(v).slice(0, 10);
 }
-function parseISODate(s?: string | null) {
-  if (!s) return null;
-  const d = new Date(String(s).slice(0, 10) + "T00:00:00");
-  return Number.isNaN(d.getTime()) ? null : d;
+function inRange(dayISO: string, start: string, end: string) {
+  return !!dayISO && dayISO >= start && dayISO <= end;
 }
-function addDays(date: Date, days: number) {
-  const d = new Date(date);
-  d.setDate(d.getDate() + days);
-  return d;
+
+function leadDateFallback(row: any) {
+  return iso10(row?.lead_date) || iso10(row?.created_at) || todayISO();
 }
-function safeNum(v: any) {
-  const n = Number(v);
+function dealDate(row: any) {
+  return iso10(row?.deal_date);
+}
+function dealValue(row: any) {
+  const n = Number(row?.deal_value ?? 0);
   return Number.isFinite(n) ? n : 0;
 }
 
-function monthRangeISO(year: number, month1to12: number) {
-  const start = new Date(year, month1to12 - 1, 1);
-  const end = new Date(year, month1to12, 0);
-  return {
-    start: start.toISOString().slice(0, 10),
-    end: end.toISOString().slice(0, 10),
-  };
+function startOfMonthISO(year: number, month: number) {
+  const d = new Date(year, month - 1, 1);
+  return d.toISOString().slice(0, 10);
+}
+function endOfMonthISO(year: number, month: number) {
+  const d = new Date(year, month, 0);
+  return d.toISOString().slice(0, 10);
+}
+
+function deltaPct(real: number, target: number) {
+  return safeDiv((real - target) * 100, target);
+}
+function deltaPill(real: number, target: number, mode: "higher_better" | "lower_better") {
+  const d = deltaPct(real, target);
+  const sign = d >= 0 ? "+" : "";
+  const text = `${sign}${d.toFixed(1)}%`;
+
+  // Você pode colorir diferente depois. Por enquanto, pill neutro (igual seu pattern).
+  return <Pill>{text}</Pill>;
+}
+
+function sum(nums: number[]) {
+  return nums.reduce((a, b) => a + b, 0);
 }
 
 // Barra simples
@@ -70,64 +89,46 @@ function ProgressBar({ valuePct }: { valuePct: number }) {
   );
 }
 
-// desvio vs meta
-function deltaPct(real: number, target: number) {
-  return safeDiv((real - target) * 100, target);
-}
-function deltaPill(real: number, target: number) {
-  const d = deltaPct(real, target);
-  const sign = d >= 0 ? "+" : "";
-  return <Pill>{`${sign}${d.toFixed(1)}%`}</Pill>;
-}
-
-function leadDateFallback(row: any) {
-  return iso10(row?.lead_date) || iso10(row?.created_at) || todayISO();
-}
-function dealDate(row: any) {
-  return iso10(row?.deal_date);
-}
-function inRange(dayISO: string, start: string, end: string) {
-  return !!dayISO && dayISO >= start && dayISO <= end;
-}
-
 export default function MetaGlobalPage() {
-  // seletor de mês (1..12). default: mês atual (mas o ano é 2026)
-  const [month, setMonth] = useState<number>(new Date().getMonth() + 1);
-
-  const { start: monthStart, end: monthEnd } = useMemo(() => monthRangeISO(YEAR, month), [month]);
-  const yearStart = `${YEAR}-01-01`;
-  const yearEnd = monthEnd; // YTD até o fim do mês selecionado
+  const year = 2026;
+  const [month, setMonth] = useState<number>(new Date().getMonth() + 1); // 1..12
 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const [leadsHarley, setLeadsHarley] = useState<any[]>([]);
-  const [leadsGio, setLeadsGio] = useState<any[]>([]);
   const [metaRows, setMetaRows] = useState<any[]>([]);
-  const [opsCustomers, setOpsCustomers] = useState<any[]>([]);
-  const [opsRenewals, setOpsRenewals] = useState<any[]>([]);
+  const [leadsHarleyAll, setLeadsHarleyAll] = useState<any[]>([]);
+  const [leadsGioAll, setLeadsGioAll] = useState<any[]>([]);
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [renewals, setRenewals] = useState<any[]>([]);
+
+  const monthStart = useMemo(() => startOfMonthISO(year, month), [year, month]);
+  const monthEnd = useMemo(() => endOfMonthISO(year, month), [year, month]);
+
+  const yearStart = `${year}-01-01`;
+  const yearEnd = `${year}-12-31`;
 
   async function refresh() {
     setLoading(true);
     setErr(null);
 
     try {
-      // busca ampla de leads (criado_at), mas a gente filtra por lead_date/deal_date no front
+      // Busca ampla de leads (por created_at) e filtra por lead_date/deal_date aqui no front
       const queryEnd = yearEnd >= todayISO() ? yearEnd : todayISO();
 
-      const [mh, mg, meta, cs, rn] = await Promise.all([
-        listMeetingLeads("harley" as Profile, "2000-01-01", queryEnd),
-        listMeetingLeads("giovanni" as Profile, "2000-01-01", queryEnd),
+      const [meta, mhAll, mgAll, cs, rn] = await Promise.all([
         listMetaAds(monthStart, monthEnd),
+        listMeetingLeads("harley", "2000-01-01", queryEnd),
+        listMeetingLeads("giovanni", "2000-01-01", queryEnd),
         listOpsCustomers(),
         listOpsCustomerRenewals(),
       ]);
 
-      setLeadsHarley(mh ?? []);
-      setLeadsGio(mg ?? []);
       setMetaRows(meta ?? []);
-      setOpsCustomers(cs ?? []);
-      setOpsRenewals(rn ?? []);
+      setLeadsHarleyAll(mhAll ?? []);
+      setLeadsGioAll(mgAll ?? []);
+      setCustomers(cs ?? []);
+      setRenewals(rn ?? []);
     } catch (e: any) {
       setErr(e?.message ?? "Erro ao carregar dados.");
     } finally {
@@ -140,130 +141,114 @@ export default function MetaGlobalPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [monthStart, monthEnd]);
 
-  // -------------------------
-  // 1) VENDAS / FATURAMENTO (YTD e mês) — por deal_date
-  // -------------------------
-  function salesRowsYTD(all: any[]) {
-    return (all ?? []).filter((r: any) => {
-      if (String(r.status) !== "venda") return false;
-      const d = dealDate(r);
-      return inRange(d, yearStart, yearEnd);
-    });
-  }
+  // ----- SALES (por deal_date) -----
+  const salesByProfileMonth = useMemo(() => {
+    const out: Record<Profile, any[]> = { harley: [], giovanni: [] };
 
-  function salesRowsMonth(all: any[]) {
-    return (all ?? []).filter((r: any) => {
-      if (String(r.status) !== "venda") return false;
-      const d = dealDate(r);
-      return inRange(d, monthStart, monthEnd);
-    });
-  }
+    const pick = (rows: any[], p: Profile) => {
+      return (rows ?? []).filter((r: any) => {
+        if (String(r.status) !== "venda") return false;
+        const d = dealDate(r);
+        return inRange(d, monthStart, monthEnd);
+      });
+    };
 
-  const salesYTDHarley = useMemo(() => salesRowsYTD(leadsHarley), [leadsHarley, yearStart, yearEnd]);
-  const salesYTDGio = useMemo(() => salesRowsYTD(leadsGio), [leadsGio, yearStart, yearEnd]);
-  const salesMonthHarley = useMemo(() => salesRowsMonth(leadsHarley), [leadsHarley, monthStart, monthEnd]);
-  const salesMonthGio = useMemo(() => salesRowsMonth(leadsGio), [leadsGio, monthStart, monthEnd]);
+    out.harley = pick(leadsHarleyAll, "harley");
+    out.giovanni = pick(leadsGioAll, "giovanni");
+    return out;
+  }, [leadsHarleyAll, leadsGioAll, monthStart, monthEnd]);
+
+  const salesByProfileYTD = useMemo(() => {
+    const out: Record<Profile, any[]> = { harley: [], giovanni: [] };
+
+    const pick = (rows: any[]) => {
+      return (rows ?? []).filter((r: any) => {
+        if (String(r.status) !== "venda") return false;
+        const d = dealDate(r);
+        return inRange(d, yearStart, yearEnd);
+      });
+    };
+
+    out.harley = pick(leadsHarleyAll);
+    out.giovanni = pick(leadsGioAll);
+    return out;
+  }, [leadsHarleyAll, leadsGioAll]);
 
   const soldValueYTD = useMemo(() => {
-    const sum = (rows: any[]) => rows.reduce((acc, r) => acc + safeNum(r?.deal_value ?? 0), 0);
-    return sum(salesYTDHarley) + sum(salesYTDGio);
-  }, [salesYTDHarley, salesYTDGio]);
+    const all = [...salesByProfileYTD.harley, ...salesByProfileYTD.giovanni];
+    return all.reduce((acc, r) => acc + dealValue(r), 0);
+  }, [salesByProfileYTD]);
 
-  const companiesYTD = useMemo(() => (salesYTDHarley.length + salesYTDGio.length), [salesYTDHarley, salesYTDGio]);
-  const monthSales = useMemo(() => (salesMonthHarley.length + salesMonthGio.length), [salesMonthHarley, salesMonthGio]);
+  const companiesYTD = useMemo(() => {
+    // 1 venda = 1 empresa (definição tua)
+    return salesByProfileYTD.harley.length + salesByProfileYTD.giovanni.length;
+  }, [salesByProfileYTD]);
 
-  // -------------------------
-  // 2) REUNIÕES MARCADAS (mês) — por lead_date (fallback)
-  // booked = todo lead com lead_date no mês (independente do status atual)
-  // -------------------------
-  const monthBooked = useMemo(() => {
-    const all = [...(leadsHarley ?? []), ...(leadsGio ?? [])];
+  // ----- MONTH: meetings booked + show-rate (por lead_date) -----
+  const meetingsBookedMonth = useMemo(() => {
+    const all = [...(leadsHarleyAll ?? []), ...(leadsGioAll ?? [])];
+    // reunião marcada = lead_date dentro do mês (independente do status)
     return all.filter((r: any) => inRange(leadDateFallback(r), monthStart, monthEnd)).length;
-  }, [leadsHarley, leadsGio, monthStart, monthEnd]);
+  }, [leadsHarleyAll, leadsGioAll, monthStart, monthEnd]);
 
-  // -------------------------
-  // 3) SHOW-RATE (mês)
-  // show = realizou + proposta + venda
-  // no_show = no_show
-  // base = só leads do mês (lead_date no mês)
-  // -------------------------
-  const { monthShow, monthNoShow, monthShowRatePct } = useMemo(() => {
-    const all = [...(leadsHarley ?? []), ...(leadsGio ?? [])].filter((r: any) =>
+  const showRateMonthPct = useMemo(() => {
+    const all = [...(leadsHarleyAll ?? []), ...(leadsGioAll ?? [])].filter((r: any) =>
       inRange(leadDateFallback(r), monthStart, monthEnd)
     );
 
-    let show = 0;
-    let noshow = 0;
+    const realizou = all.filter((r: any) => String(r.status) === "realizou").length;
+    const noShow = all.filter((r: any) => String(r.status) === "no_show").length;
 
-    for (const r of all) {
-      const s = String(r.status);
-      if (s === "no_show") noshow += 1;
-      if (s === "realizou" || s === "proposta" || s === "venda") show += 1;
+    // show-rate = realizou / (realizou + no_show)
+    const denom = realizou + noShow;
+    return denom > 0 ? safeDiv(realizou * 100, denom) : 0;
+  }, [leadsHarleyAll, leadsGioAll, monthStart, monthEnd]);
+
+  // ----- MONTH: renewals pct -----
+  const renewalsMonthPct = useMemo(() => {
+    // Base (due) = clientes com renewal_date (vencimento) dentro do mês
+    const dueCustomers = (customers ?? []).filter((c: any) => inRange(iso10(c.renewal_date), monthStart, monthEnd));
+    const dueIds = new Set(dueCustomers.map((c: any) => String(c.id)));
+
+    // Renovou no mês = existe registro em ops_customer_renewals com renewal_date (pagamento) dentro do mês
+    const renewedIds = new Set<string>();
+    for (const r of renewals ?? []) {
+      const payDate = iso10((r as any).renewal_date);
+      if (!inRange(payDate, monthStart, monthEnd)) continue;
+      const cid = String((r as any).customer_id ?? "");
+      if (cid && dueIds.has(cid)) renewedIds.add(cid);
     }
 
-    const denom = show + noshow;
-    const rate = denom > 0 ? safeDiv(show * 100, denom) : 0;
+    return dueIds.size > 0 ? safeDiv(renewedIds.size * 100, dueIds.size) : 0;
+  }, [customers, renewals, monthStart, monthEnd]);
 
-    return { monthShow: show, monthNoShow: noshow, monthShowRatePct: rate };
-  }, [leadsHarley, leadsGio, monthStart, monthEnd]);
-
-  // -------------------------
-  // 4) META ADS (spend) mês — por perfil
-  // -------------------------
-  const spendByProfile = useMemo(() => {
+  // ----- Ads spend month by profile -----
+  const spendByProfileMonth = useMemo(() => {
     const out: Record<Profile, number> = { harley: 0, giovanni: 0 };
     for (const r of metaRows ?? []) {
       const p = (r.profile as Profile) || "harley";
-      out[p] += safeNum(r.spend ?? 0);
+      out[p] += Number(r.spend || 0);
     }
     return out;
   }, [metaRows]);
 
-  // custo por venda (mês) separado
   const costPerSaleHarley = useMemo(() => {
-    const spend = spendByProfile.harley;
-    const sales = salesMonthHarley.length;
+    const spend = spendByProfileMonth.harley;
+    const sales = salesByProfileMonth.harley.length;
     return sales > 0 ? safeDiv(spend, sales) : 0;
-  }, [spendByProfile, salesMonthHarley]);
+  }, [spendByProfileMonth, salesByProfileMonth]);
 
   const costPerSaleGio = useMemo(() => {
-    const spend = spendByProfile.giovanni;
-    const sales = salesMonthGio.length;
+    const spend = spendByProfileMonth.giovanni;
+    const sales = salesByProfileMonth.giovanni.length;
     return sales > 0 ? safeDiv(spend, sales) : 0;
-  }, [spendByProfile, salesMonthGio]);
+  }, [spendByProfileMonth, salesByProfileMonth]);
 
-  // -------------------------
-  // 5) RENOVAÇÕES (%) mês
-  // regra prática com o que temos hoje:
-  // base = clientes com renewal_date (vencimento) no mês
-  // renovou = esses clientes que tiveram pagamento de renovação até +15 dias do fim do mês
-  // -------------------------
-  const monthRenewalsPct = useMemo(() => {
-    const due = (opsCustomers ?? []).filter((c: any) => inRange(iso10(c.renewal_date), monthStart, monthEnd));
-    if (due.length === 0) return 0;
-
-    const limit = addDays(parseISODate(monthEnd) ?? new Date(), 15).toISOString().slice(0, 10);
-
-    const renewedSet = new Set<string>();
-    for (const r of opsRenewals ?? []) {
-      const cid = String(r.customer_id ?? "");
-      const paidAt = iso10(r.renewal_date);
-      if (!cid) continue;
-      // pagamento dentro do mês ou até 15 dias após (pra não punir atraso curto)
-      if (inRange(paidAt, monthStart, limit)) renewedSet.add(cid);
-    }
-
-    const renewed = due.filter((c: any) => renewedSet.has(String(c.id))).length;
-    return safeDiv(renewed * 100, due.length);
-  }, [opsCustomers, opsRenewals, monthStart, monthEnd]);
-
-  // -------------------------
-  // default inteligente
-  // -------------------------
+  // ----- Month goals (default inteligente) -----
   const monthGoalRevenue = useMemo(() => GOALS_2026.revenueAnnual / 12, []);
   const monthGoalSales = useMemo(() => GOALS_2026.companiesAnnual / 12, []);
 
-  // progresso anual
+  // ----- Progress annual -----
   const progressRevenuePct = useMemo(
     () => safeDiv(soldValueYTD * 100, GOALS_2026.revenueAnnual),
     [soldValueYTD]
@@ -273,17 +258,23 @@ export default function MetaGlobalPage() {
     [companiesYTD]
   );
 
+  // Month sales total (sum profiles)
+  const monthSalesTotal = useMemo(() => {
+    return salesByProfileMonth.harley.length + salesByProfileMonth.giovanni.length;
+  }, [salesByProfileMonth]);
+
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="text-lg font-semibold">Meta Global</div>
-          <div className="text-sm text-slate-400">Clareza do time: metas do ano e desempenho do mês.</div>
+          <div className="text-sm text-slate-400">Metas do ano + desempenho do mês (dados reais).</div>
         </div>
 
         <div className="flex items-center gap-2">
           {loading ? <Pill>carregando…</Pill> : <Pill>ok</Pill>}
+
           <div className="ml-2 text-sm text-slate-400">Mês</div>
           <select
             className="rounded-2xl border border-slate-800 bg-slate-950/20 px-3 py-2 text-sm text-slate-200"
@@ -303,16 +294,23 @@ export default function MetaGlobalPage() {
       </div>
 
       {err ? (
-        <div className="rounded-3xl border border-red-900/50 bg-red-950/30 px-5 py-4 text-sm text-red-200">{err}</div>
+        <div className="rounded-3xl border border-red-900/50 bg-red-950/30 px-5 py-4 text-sm text-red-200">
+          {err}
+        </div>
       ) : null}
 
       {/* Topo: 2 cards lado a lado */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <Card title="Meta anual — Faturamento" subtitle={`Meta 2026: ${brl(GOALS_2026.revenueAnnual)}`} right={<Pill>YTD</Pill>}>
+        <Card
+          title="Meta anual — Faturamento"
+          subtitle={`Meta 2026: ${brl(GOALS_2026.revenueAnnual)}`}
+          right={<Pill>YTD</Pill>}
+        >
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <Stat label="Real (acumulado)" value={brl(soldValueYTD)} hint={`Meta do mês: ${brl(monthGoalRevenue)}`} />
-            <Stat label="Progresso anual" value={pctFmt(progressRevenuePct)} hint="baseado nas vendas realizadas" />
+            <Stat label="Progresso anual" value={pctFmt(progressRevenuePct)} hint="baseado nas vendas (deal_date)" />
           </div>
+
           <div className="mt-4">
             <ProgressBar valuePct={progressRevenuePct} />
           </div>
@@ -327,6 +325,7 @@ export default function MetaGlobalPage() {
             <Stat label="Real (acumulado)" value={String(companiesYTD)} hint={`Meta do mês: ${Math.round(monthGoalSales)} vendas`} />
             <Stat label="Progresso anual" value={pctFmt(progressCompaniesPct)} hint="1 venda = 1 empresa" />
           </div>
+
           <div className="mt-4">
             <ProgressBar valuePct={progressCompaniesPct} />
           </div>
@@ -334,51 +333,49 @@ export default function MetaGlobalPage() {
       </div>
 
       {/* Indicadores do mês */}
-      <Card title="Indicadores do mês" subtitle="Reais puxados do DB. Custos separados por perfil.">
+      <Card title="Indicadores do mês" subtitle={`Período: ${monthStart} → ${monthEnd}`}>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-5">
-          {/* Vendas do mês */}
+          {/* Vendas do mês (soma) */}
           <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
             <div className="text-xs text-slate-400">Vendas do mês</div>
-            <div className="mt-1 text-2xl font-semibold">{monthSales}</div>
+            <div className="mt-1 text-2xl font-semibold">{monthSalesTotal}</div>
             <div className="mt-2 text-xs text-slate-400">
               Meta do mês: <span className="text-slate-200">{Math.round(monthGoalSales)}</span>
             </div>
-            <div className="mt-2">{deltaPill(monthSales, Math.round(monthGoalSales))}</div>
+            <div className="mt-2">{deltaPill(monthSalesTotal, Math.round(monthGoalSales), "higher_better")}</div>
           </div>
 
-          {/* Reuniões marcadas */}
+          {/* Reuniões marcadas (soma) */}
           <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
             <div className="text-xs text-slate-400">Reuniões marcadas</div>
-            <div className="mt-1 text-2xl font-semibold">{monthBooked}</div>
-            <div className="mt-2 text-xs text-slate-400">Meta: (definir depois)</div>
-            <div className="mt-2">
-              <Pill>—</Pill>
+            <div className="mt-1 text-2xl font-semibold">{meetingsBookedMonth}</div>
+            <div className="mt-2 text-xs text-slate-400">
+              Meta: <span className="text-slate-200">{GOALS_2026.meetingsBookedMonthly}</span>
             </div>
+            <div className="mt-2">{deltaPill(meetingsBookedMonth, GOALS_2026.meetingsBookedMonthly, "higher_better")}</div>
           </div>
 
           {/* Show-rate */}
           <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
             <div className="text-xs text-slate-400">Show-rate</div>
-            <div className="mt-1 text-2xl font-semibold">{pctFmt(monthShowRatePct)}</div>
+            <div className="mt-1 text-2xl font-semibold">{pctFmt(showRateMonthPct)}</div>
             <div className="mt-2 text-xs text-slate-400">
-              Show: <span className="text-slate-200">{monthShow}</span> • No-show: <span className="text-slate-200">{monthNoShow}</span>
+              Meta: <span className="text-slate-200">{GOALS_2026.showRatePct}%</span>
             </div>
-            <div className="mt-2">
-              <Pill>—</Pill>
-            </div>
+            <div className="mt-2">{deltaPill(showRateMonthPct, GOALS_2026.showRatePct, "higher_better")}</div>
           </div>
 
           {/* % Renovações */}
           <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
             <div className="text-xs text-slate-400">% Renovações</div>
-            <div className="mt-1 text-2xl font-semibold">{pctFmt(monthRenewalsPct)}</div>
+            <div className="mt-1 text-2xl font-semibold">{pctFmt(renewalsMonthPct)}</div>
             <div className="mt-2 text-xs text-slate-400">
               Meta: <span className="text-slate-200">{GOALS_2026.renewalsPct}%</span>
             </div>
-            <div className="mt-2">{deltaPill(monthRenewalsPct, GOALS_2026.renewalsPct)}</div>
+            <div className="mt-2">{deltaPill(renewalsMonthPct, GOALS_2026.renewalsPct, "higher_better")}</div>
           </div>
 
-          {/* Custo por venda (separado) */}
+          {/* Custo por venda (separado por perfil) */}
           <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
             <div className="text-xs text-slate-400">Custo por venda</div>
             <div className="mt-1 text-sm text-slate-400">
@@ -395,8 +392,8 @@ export default function MetaGlobalPage() {
             </div>
 
             <div className="mt-3 flex flex-wrap gap-2">
-              {deltaPill(costPerSaleHarley, GOALS_2026.costPerSale)}
-              {deltaPill(costPerSaleGio, GOALS_2026.costPerSale)}
+              {deltaPill(costPerSaleHarley, GOALS_2026.costPerSale, "lower_better")}
+              {deltaPill(costPerSaleGio, GOALS_2026.costPerSale, "lower_better")}
             </div>
           </div>
         </div>
