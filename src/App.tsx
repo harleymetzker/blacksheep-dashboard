@@ -1,4 +1,6 @@
+// src/App.tsx
 import { NavLink, Route, Routes } from "react-router-dom";
+
 import MetaGlobalPage from "./pages/MetaGlobalPage";
 import OverviewPage from "./pages/OverviewPage";
 import LeadsPage from "./pages/LeadsPage";
@@ -12,9 +14,7 @@ function NavItem({ to, children }: any) {
       to={to}
       className={({ isActive }) =>
         `px-4 py-2 rounded-xl text-sm transition ${
-          isActive
-            ? "bg-slate-800/80 text-slate-100"
-            : "text-slate-300 hover:bg-slate-800/50"
+          isActive ? "bg-slate-800/80 text-slate-100" : "text-slate-300 hover:bg-slate-800/50"
         }`
       }
     >
@@ -30,13 +30,11 @@ export default function App() {
         <div className="mx-auto max-w-7xl px-6 py-4 flex items-center justify-between">
           <div>
             <div className="text-lg font-semibold">Black Sheep — Dashboard</div>
-            <div className="text-xs text-slate-400">
-              Central para não se perder entre ferramentas
-            </div>
+            <div className="text-xs text-slate-400">Central para não se perder entre ferramentas</div>
           </div>
 
           <nav className="flex gap-2">
-            <NavItem to="/meta">Meta Global</NavItem>
+            <NavItem to="/meta-global">Meta Global</NavItem>
             <NavItem to="/">Visão geral</NavItem>
             <NavItem to="/leads">Leads</NavItem>
             <NavItem to="/sales">Vendas</NavItem>
@@ -48,7 +46,7 @@ export default function App() {
 
       <main className="mx-auto max-w-7xl px-6 py-8">
         <Routes>
-          <Route path="/meta" element={<MetaGlobalPage />} />
+          <Route path="/meta-global" element={<MetaGlobalPage />} />
           <Route path="/" element={<OverviewPage />} />
           <Route path="/leads" element={<LeadsPage />} />
           <Route path="/sales" element={<SalesPage />} />
