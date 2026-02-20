@@ -1,4 +1,3 @@
-// src/pages/OpsPage.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { Button, Card, Input, Label, Modal, Select, Pill, Table, Stat } from "../components/ui";
 import { todayISO, brl, safeDiv } from "../lib/utils";
