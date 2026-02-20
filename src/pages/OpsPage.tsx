@@ -816,7 +816,7 @@ const ltvByCustomer = useMemo(() => {
 
       {/* 5) CONTADORES */}
       <Card title="Indicadores de base (cadastro)" subtitle="Não renovou = passou 30 dias do renewal_date sem renovação.">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
           <Stat label="Clientes cadastrados" value={String(csStats.total)} />
           <Stat label="Clientes ativos" value={`${csStats.active} (${csStats.pctActive.toFixed(1)}%)`} />
           <Stat label="Clientes que renovaram" value={`${csStats.renewed} (${csStats.pctRenewed.toFixed(1)}%)`} />
