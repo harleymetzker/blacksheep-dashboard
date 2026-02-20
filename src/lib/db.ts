@@ -332,3 +332,72 @@ export async function deleteOpsCustomer(id: string) {
   const { error } = await supabase.from("ops_customers").delete().eq("id", id);
   if (error) throw error;
 }
+
+// =============================
+// OPS CUSTOMERS (Customer Success)
+// =============================
+
+export type OpsCustomer = {
+  id: string;
+  created_at?: string;
+  entry_date: string | null;
+  name: string;
+  phone: string | null;
+  active_product: string | null;
+  paid_value: number | null;
+  renewal_date: string | null;
+  churned_at?: string | null;
+};
+
+export async function listOpsCustomers(): Promise<OpsCustomer[]> {
+  const { data, error } = await supabase
+    .from("ops_customers")
+    .select("*")
+    .order("renewal_date", { ascending: true });
+
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function upsertOpsCustomer(row: Partial<OpsCustomer>) {
+  const { error } = await supabase.from("ops_customers").upsert(row);
+  if (error) throw error;
+}
+
+export async function deleteOpsCustomer(id: string) {
+  const { error } = await supabase.from("ops_customers").delete().eq("id", id);
+  if (error) throw error;
+}
+
+// =============================
+// OPS CUSTOMER RENEWALS
+// =============================
+
+export type OpsCustomerRenewal = {
+  id: string;
+  created_at?: string;
+  customer_id: string;
+  renewal_date: string;
+  paid_value: number | null;
+  notes: string | null;
+};
+
+export async function listOpsCustomerRenewals(): Promise<OpsCustomerRenewal[]> {
+  const { data, error } = await supabase
+    .from("ops_customer_renewals")
+    .select("*")
+    .order("renewal_date", { ascending: false });
+
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function upsertOpsCustomerRenewal(row: Partial<OpsCustomerRenewal>) {
+  const { error } = await supabase.from("ops_customer_renewals").upsert(row);
+  if (error) throw error;
+}
+
+export async function deleteOpsCustomerRenewal(id: string) {
+  const { error } = await supabase.from("ops_customer_renewals").delete().eq("id", id);
+  if (error) throw error;
+}
