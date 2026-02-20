@@ -244,22 +244,22 @@ export default function OpsPage() {
     return map;
   }, [renewals]);
 
-  // ✅ LTV: entry_paid_value (imutável) + soma de renovações
-  const ltvByCustomer = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const c of customers ?? []) {
-      const cid = String((c as any).id ?? "");
-      const base = safeNum((c as any).entry_paid_value ?? (c as any).paid_value ?? 0);
-      const rs = renewalsByCustomer.get(cid) ?? [];
-      const sumRenewals = rs.reduce((acc, r) => acc + safeNum((r as any).paid_value ?? 0), 0);
-      map.set(cid, base + sumRenewals);
-    }
-    return map;
-  }, [customers, renewalsByCustomer]);
+// ✅ LTV: entry_paid_value (imutável) + soma das renovações
+const ltvByCustomer = useMemo(() => {
+  const map = new Map<string, number>();
+  for (const c of customers ?? []) {
+    const cid = String((c as any).id ?? "");
+    const base = safeNum((c as any).entry_paid_value ?? 0); // ✅ sem fallback em paid_value
+    const rs = renewalsByCustomer.get(cid) ?? [];
+    const sumRenewals = rs.reduce((acc, r) => acc + safeNum((r as any).paid_value ?? 0), 0);
+    map.set(cid, base + sumRenewals);
+  }
+  return map;
+}, [customers, renewalsByCustomer]);
 
   const upcomingRenewals = useMemo(() => {
     return (customers ?? [])
-      .filter((c: any) => inNextDays(c.renewal_date, 30))
+      .filter((c: any) => inNextDays(c.renewal_date, 15))
       .slice()
       .sort((a: any, b: any) => String(a.renewal_date ?? "").localeCompare(String(b.renewal_date ?? "")));
   }, [customers]);
@@ -289,7 +289,7 @@ export default function OpsPage() {
       const hasRenewal = renewedSet.has(cid);
       if (hasRenewal) return false;
       if (!c.renewal_date) return false;
-      return olderThanDays(c.renewal_date, 30);
+      return olderThanDays(c.renewal_date, 15);
     }).length;
 
     const pctActive = safeDiv(active * 100, total);
