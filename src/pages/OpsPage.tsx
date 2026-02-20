@@ -1,3 +1,4 @@
+// src/pages/OpsPage.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { Button, Card, Input, Label, Modal, Select, Pill, Table, Stat } from "../components/ui";
 import { todayISO, brl, safeDiv } from "../lib/utils";
@@ -97,9 +98,10 @@ function safeNum(v: any) {
   return Number.isFinite(n) ? n : 0;
 }
 
+// regra padrão: próximo vencimento = +30 dias do vencimento atual
 function nextRenewalDefault(currentRenewalDate?: string | null) {
   const d = parseISODate(currentRenewalDate);
-  if (!d) return todayISO();
+  if (!d) return addDays(new Date(), 30).toISOString().slice(0, 10);
   return addDays(d, 30).toISOString().slice(0, 10);
 }
 
@@ -154,7 +156,6 @@ export default function OpsPage() {
     product: "",
     paid_value: "",
     renewal_date: "",
-    notes: "",
   });
 
   // ---------- Renewal: add modal ----------
@@ -165,7 +166,7 @@ export default function OpsPage() {
     renewal_date: todayISO(), // data do pagamento
     paid_value: "",
     notes: "",
-    next_renewal_date: "", // próximo vencimento (atualiza ops_customers.renewal_date)
+    next_renewal_date: "", // novo vencimento (atualiza ops_customers.renewal_date)
   });
 
   async function refresh() {
@@ -243,7 +244,7 @@ export default function OpsPage() {
     return map;
   }, [renewals]);
 
-  // ✅ LTV: entry_paid_value (imutável) + soma das renovações
+  // ✅ LTV: entry_paid_value (imutável) + soma de renovações
   const ltvByCustomer = useMemo(() => {
     const map = new Map<string, number>();
     for (const c of customers ?? []) {
@@ -306,7 +307,7 @@ export default function OpsPage() {
   }
 
   function openEditTask(t: OpsTask) {
-    setEditingTaskId((t as any).id);
+    setEditingTaskId(String((t as any).id));
     setTaskForm({
       title: (t as any).title ?? "",
       description: (t as any).description ?? "",
@@ -334,10 +335,7 @@ export default function OpsPage() {
         status: taskForm.status,
       };
 
-      if (!payload.title) {
-        setErr("Título é obrigatório.");
-        return;
-      }
+      if (!payload.title) return setErr("Título é obrigatório.");
 
       await upsertOps(payload);
       setOpenTaskEdit(false);
@@ -366,7 +364,7 @@ export default function OpsPage() {
   }
 
   function openEditItem(it: OpsImportantItem) {
-    setEditingItemId((it as any).id);
+    setEditingItemId(String((it as any).id));
     setItemForm({
       category: ((it as any).category ?? "link") as ImportantCategory,
       title: (it as any).title ?? "",
@@ -425,7 +423,6 @@ export default function OpsPage() {
       product: "",
       paid_value: "",
       renewal_date: "",
-      notes: "",
     });
     setOpenCustomerEdit(true);
   }
@@ -439,7 +436,6 @@ export default function OpsPage() {
       product: String((c as any).product ?? (c as any).active_product ?? ""),
       paid_value: String((c as any).paid_value ?? ""),
       renewal_date: iso10((c as any).renewal_date) || "",
-      notes: String((c as any).notes ?? ""),
     });
     setOpenCustomerEdit(true);
   }
@@ -460,7 +456,6 @@ export default function OpsPage() {
           : ({} as any)),
         paid_value: paid as any, // valor atual
         renewal_date: customerForm.renewal_date || null,
-        notes: customerForm.notes.trim() || null,
         ...(isNew ? ({ entry_paid_value: paid } as any) : ({} as any)), // ✅ valor inicial (imutável)
       };
 
@@ -487,65 +482,60 @@ export default function OpsPage() {
 
   // ---------- Renewal actions ----------
   function openAddRenewal(c: OpsCustomer) {
-    const currentRenewal = iso10((c as any).renewal_date) || todayISO();
+    const currentDue = iso10((c as any).renewal_date) || todayISO();
     setRenewalCustomer(c);
     setRenewalForm({
       renewal_date: todayISO(),
       paid_value: String((c as any).paid_value ?? ""),
       notes: "",
-      next_renewal_date: nextRenewalDefault(currentRenewal),
+      next_renewal_date: nextRenewalDefault(currentDue),
     });
     setOpenRenewalAdd(true);
   }
 
   async function saveRenewal() {
-  setErr(null);
-  try {
-    if (!renewalCustomer) return;
+    setErr(null);
+    try {
+      if (!renewalCustomer) return;
 
-    // 1) grava a renovação (histórico)
-    const renewalPayload: Partial<OpsCustomerRenewal> = {
-      id: uuid(),
-      customer_id: renewalCustomer.id,
-      renewal_date: renewalForm.renewal_date || todayISO(),
-      paid_value: renewalForm.paid_value ? safeNum(renewalForm.paid_value) : null,
-      notes: renewalForm.notes.trim() || null,
-    };
+      // 1) grava a renovação (histórico)
+      const renewalPayload: Partial<OpsCustomerRenewal> = {
+        id: uuid(),
+        customer_id: (renewalCustomer as any).id,
+        renewal_date: renewalForm.renewal_date || todayISO(), // data do pagamento
+        paid_value: renewalForm.paid_value ? safeNum(renewalForm.paid_value) : null,
+        notes: renewalForm.notes.trim() || null,
+      };
 
-    await upsertOpsCustomerRenewal(renewalPayload);
+      await upsertOpsCustomerRenewal(renewalPayload);
 
-    // 2) opcional (recomendado): atualiza o cliente com o "valor atual" (paid_value)
-    // IMPORTANTE: manda 'name' junto pra nunca cair em NOT NULL se o Supabase tentar inserir.
-    const currentProduct = String((renewalCustomer as any).product ?? (renewalCustomer as any).active_product ?? "").trim();
+      // 2) atualiza o cliente:
+      //    - paid_value vira o valor do novo ciclo (o que ele pagou agora)
+      //    - renewal_date vira o PRÓXIMO VENCIMENTO (sai do card de 30 dias)
+      //    - manda name/entry_date juntos pra evitar NOT NULL caso o upsert tente inserir
+      const currentProduct = String(
+        (renewalCustomer as any).product ?? (renewalCustomer as any).active_product ?? ""
+      ).trim();
 
-    await upsertOpsCustomer({
-      id: renewalCustomer.id,
+      const updatedCustomer: Partial<OpsCustomer> = {
+        id: (renewalCustomer as any).id,
+        name: String((renewalCustomer as any).name ?? "").trim() || "Sem nome",
+        entry_date: (renewalCustomer as any).entry_date ?? todayISO(),
+        phone: (renewalCustomer as any).phone ?? null,
+        ...(currentProduct ? ({ product: currentProduct, active_product: currentProduct } as any) : ({} as any)),
+        paid_value: renewalForm.paid_value ? safeNum(renewalForm.paid_value) : ((renewalCustomer as any).paid_value ?? null),
+        renewal_date: renewalForm.next_renewal_date || ((renewalCustomer as any).renewal_date ?? null),
+      };
 
-      // campos NOT NULL (evita o erro)
-      name: String((renewalCustomer as any).name ?? "").trim() || "Sem nome",
-      entry_date: (renewalCustomer as any).entry_date ?? todayISO(),
+      await upsertOpsCustomer(updatedCustomer as any);
 
-      // campos opcionais
-      phone: (renewalCustomer as any).phone ?? null,
-      ...(currentProduct
-        ? ({ product: currentProduct, active_product: currentProduct } as any)
-        : ({} as any)),
-
-      // aqui vira o "valor atual"
-      paid_value: renewalForm.paid_value ? safeNum(renewalForm.paid_value) : (renewalCustomer as any).paid_value ?? null,
-
-      // NÃO mexo na renewal_date do cliente aqui porque depende da sua regra (mensal/anual etc).
-      // Se você quiser atualizar o próximo vencimento automaticamente, me diga a regra.
-      renewal_date: (renewalCustomer as any).renewal_date ?? null,
-    } as any);
-
-    setOpenRenewalAdd(false);
-    setRenewalCustomer(null);
-    await refresh();
-  } catch (e: any) {
-    setErr(e?.message ?? "Erro ao registrar renovação.");
+      setOpenRenewalAdd(false);
+      setRenewalCustomer(null);
+      await refresh();
+    } catch (e: any) {
+      setErr(e?.message ?? "Erro ao registrar renovação.");
+    }
   }
-}
 
   async function removeRenewal(id: string) {
     if (!confirm("Excluir esta renovação?")) return;
@@ -765,18 +755,21 @@ export default function OpsPage() {
           rows={customers as any}
           rowKey={(r: any) => r.id}
           actions={(r: any) => (
-  <div className="flex justify-end gap-2">
-    <Button variant="outline" onClick={() => openAddRenewal(r)}>
-      Marcar renovação
-    </Button>
-    <Button variant="outline" onClick={() => openEditCustomer(r)}>
-      Editar
-    </Button>
-    <Button variant="ghost" onClick={() => removeCustomer(r.id)}>
-      Excluir
-    </Button>
-  </div>
-)}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => openCustomerDetails(r)}>
+                Ver
+              </Button>
+              <Button variant="outline" onClick={() => openAddRenewal(r)}>
+                Marcar renovação
+              </Button>
+              <Button variant="outline" onClick={() => openEditCustomer(r)}>
+                Editar
+              </Button>
+              <Button variant="ghost" onClick={() => removeCustomer(r.id)}>
+                Excluir
+              </Button>
+            </div>
+          )}
         />
       </Card>
 
@@ -822,10 +815,7 @@ export default function OpsPage() {
       </Card>
 
       {/* 5) CONTADORES */}
-      <Card
-        title="Indicadores de base (cadastro)"
-        subtitle="Não renovou = passou 30 dias do renewal_date sem renovação."
-      >
+      <Card title="Indicadores de base (cadastro)" subtitle="Não renovou = passou 30 dias do renewal_date sem renovação.">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <Stat label="Clientes cadastrados" value={String(csStats.total)} />
           <Stat label="Clientes ativos" value={`${csStats.active} (${csStats.pctActive.toFixed(1)}%)`} />
@@ -833,6 +823,118 @@ export default function OpsPage() {
           <Stat label="Clientes que não renovaram" value={`${csStats.notRenewed} (${csStats.pctNotRenewed.toFixed(1)}%)`} />
         </div>
       </Card>
+
+      {/* MODAL: VIEW CUSTOMER (com LTV dentro) */}
+      <Modal
+        open={openCustomerView}
+        title={viewCustomer?.name ?? "Cliente"}
+        subtitle={viewCustomer?.phone ? `Telefone: ${String(viewCustomer.phone)}` : "Sem telefone"}
+        onClose={() => {
+          setOpenCustomerView(false);
+          setViewCustomer(null);
+        }}
+      >
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-4 py-3">
+              <div className="text-xs text-slate-400">Entrada</div>
+              <div className="text-sm font-semibold">{iso10((viewCustomer as any)?.entry_date) || "—"}</div>
+            </div>
+
+            <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-4 py-3">
+              <div className="text-xs text-slate-400">Próximo vencimento</div>
+              <div className="text-sm font-semibold">{iso10((viewCustomer as any)?.renewal_date) || "—"}</div>
+            </div>
+
+            <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-4 py-3 md:col-span-2">
+              <div className="text-xs text-slate-400">Produto ativo</div>
+              <div className="text-sm font-semibold">
+                {String((viewCustomer as any)?.product ?? (viewCustomer as any)?.active_product ?? "—")}
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-4 py-3">
+              <div className="text-xs text-slate-400">Valor atual do ciclo</div>
+              <div className="text-sm font-semibold">{brl(safeNum((viewCustomer as any)?.paid_value ?? 0))}</div>
+            </div>
+
+            <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-4 py-3">
+              <div className="text-xs text-slate-400">LTV</div>
+              <div className="text-sm font-semibold">{brl(safeNum(ltvByCustomer.get(String((viewCustomer as any)?.id)) ?? 0))}</div>
+            </div>
+
+            <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-4 py-3 md:col-span-2">
+              <div className="text-xs text-slate-400">Renovou</div>
+              <div className="text-sm font-semibold">
+                {(renewalsByCustomer.get(String((viewCustomer as any)?.id)) ?? []).length > 0 ? "Sim" : "Não"}
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
+            <div className="text-sm font-semibold">Histórico de renovações</div>
+
+            {viewCustomer?.id && (renewalsByCustomer.get(String(viewCustomer.id)) ?? []).length > 0 ? (
+              <div className="mt-3 space-y-2">
+                {(renewalsByCustomer.get(String(viewCustomer.id)) ?? []).map((r) => (
+                  <div
+                    key={String((r as any).id)}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-800 bg-slate-950/10 px-4 py-3"
+                  >
+                    <div className="text-sm">
+                      <span className="font-semibold">{iso10((r as any).renewal_date)}</span>
+                      {(r as any).paid_value != null ? (
+                        <span className="text-slate-300"> • {brl(safeNum((r as any).paid_value))}</span>
+                      ) : null}
+                      {(r as any).notes ? (
+                        <div className="mt-1 text-xs text-slate-400 whitespace-pre-wrap">{String((r as any).notes)}</div>
+                      ) : null}
+                    </div>
+                    <Button variant="ghost" onClick={() => removeRenewal(String((r as any).id))}>
+                      Excluir
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-2 text-sm text-slate-500">Sem renovações registradas.</div>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (!viewCustomer) return;
+                setOpenCustomerView(false);
+                openAddRenewal(viewCustomer);
+              }}
+            >
+              Marcar renovação
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (!viewCustomer) return;
+                setOpenCustomerView(false);
+                openEditCustomer(viewCustomer);
+              }}
+            >
+              Editar
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                if (!viewCustomer) return;
+                setOpenCustomerView(false);
+                removeCustomer(String((viewCustomer as any).id));
+              }}
+            >
+              Excluir
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* MODAL: ADD/EDIT IMPORTANT ITEM */}
       <Modal
@@ -923,18 +1025,12 @@ export default function OpsPage() {
 
             <div>
               <Label>Telefone</Label>
-              <Input
-                value={customerForm.phone}
-                onChange={(e) => setCustomerForm((s) => ({ ...s, phone: e.target.value }))}
-              />
+              <Input value={customerForm.phone} onChange={(e) => setCustomerForm((s) => ({ ...s, phone: e.target.value }))} />
             </div>
 
             <div>
               <Label>Produto ativo</Label>
-              <Input
-                value={customerForm.product}
-                onChange={(e) => setCustomerForm((s) => ({ ...s, product: e.target.value }))}
-              />
+              <Input value={customerForm.product} onChange={(e) => setCustomerForm((s) => ({ ...s, product: e.target.value }))} />
             </div>
 
             <div>
@@ -944,14 +1040,6 @@ export default function OpsPage() {
                 step="0.01"
                 value={customerForm.paid_value}
                 onChange={(e) => setCustomerForm((s) => ({ ...s, paid_value: e.target.value }))}
-              />
-            </div>
-
-            <div className="md:col-span-2">
-              <Label>Observações (opcional)</Label>
-              <Input
-                value={customerForm.notes}
-                onChange={(e) => setCustomerForm((s) => ({ ...s, notes: e.target.value }))}
               />
             </div>
           </div>
@@ -1026,7 +1114,7 @@ export default function OpsPage() {
         </div>
       </Modal>
 
-      {/* MODAL: VIEW TASK (mantive só os essenciais para não inflar o arquivo aqui) */}
+      {/* MODAL: VIEW TASK */}
       <Modal
         open={openTaskView}
         title={viewTask?.title ?? "Tarefa"}
@@ -1047,6 +1135,29 @@ export default function OpsPage() {
             <div className="mt-2 text-sm text-slate-300 whitespace-pre-wrap">
               {viewTask?.description ? viewTask.description : "Sem descrição."}
             </div>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (!viewTask) return;
+                setOpenTaskView(false);
+                openEditTask(viewTask);
+              }}
+            >
+              Editar
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                if (!viewTask) return;
+                setOpenTaskView(false);
+                removeTask(String((viewTask as any).id));
+              }}
+            >
+              Excluir
+            </Button>
           </div>
         </div>
       </Modal>
