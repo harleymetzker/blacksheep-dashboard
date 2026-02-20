@@ -58,10 +58,6 @@ function convRate(from: number, to: number) {
   return pct(safeDiv(to * 100, from));
 }
 
-function lastNDays(rows: DailyFunnel[], n: number) {
-  return rows.slice(0, n);
-}
-
 function isoDate(v?: string | null) {
   if (!v) return "";
   return String(v).slice(0, 10);
@@ -77,6 +73,13 @@ function leadDateFallback(row: any) {
 
 function maxISO(a: string, b: string) {
   return a >= b ? a : b;
+}
+
+// Renomes aprovados
+function stageLabelLocal(s: Stage) {
+  if (s === "reuniao") return "Reunião marcada";
+  if (s === "proposta") return "Reunião realizada";
+  return stageLabel(s);
 }
 
 export default function LeadsPage() {
@@ -198,23 +201,24 @@ export default function LeadsPage() {
   const totalsHarley = useMemo(() => sumTotals(dailyHarley), [dailyHarley]);
   const totalsGio = useMemo(() => sumTotals(dailyGio), [dailyGio]);
 
-  const convHarley = useMemo(() => {
+  // % dentro do card (sem setinha)
+  const ratesHarley = useMemo(() => {
     const t = totalsHarley;
     return {
-      c_q: convRate(t.contato, t.qualificacao),
-      q_r: convRate(t.qualificacao, t.reuniao),
-      r_p: convRate(t.reuniao, t.proposta),
-      p_f: convRate(t.proposta, t.fechado),
+      q_from_c: convRate(t.contato, t.qualificacao),
+      r_from_q: convRate(t.qualificacao, t.reuniao),
+      p_from_r: convRate(t.reuniao, t.proposta),
+      f_from_p: convRate(t.proposta, t.fechado),
     };
   }, [totalsHarley]);
 
-  const convGio = useMemo(() => {
+  const ratesGio = useMemo(() => {
     const t = totalsGio;
     return {
-      c_q: convRate(t.contato, t.qualificacao),
-      q_r: convRate(t.qualificacao, t.reuniao),
-      r_p: convRate(t.reuniao, t.proposta),
-      p_f: convRate(t.proposta, t.fechado),
+      q_from_c: convRate(t.contato, t.qualificacao),
+      r_from_q: convRate(t.qualificacao, t.reuniao),
+      p_from_r: convRate(t.reuniao, t.proposta),
+      f_from_p: convRate(t.proposta, t.fechado),
     };
   }, [totalsGio]);
 
@@ -317,7 +321,7 @@ export default function LeadsPage() {
       }
 
       if (!payload.lead_date) {
-        setErr("Data do lead é obrigatória.");
+        setErr("Dia da reunião é obrigatório.");
         return;
       }
 
@@ -340,18 +344,50 @@ export default function LeadsPage() {
     }
   }
 
-  const dailyLast5Harley = useMemo(() => lastNDays(dailyHarley, 5), [dailyHarley]);
-  const dailyLast5Gio = useMemo(() => lastNDays(dailyGio, 5), [dailyGio]);
+  // ordenação (mais recente primeiro) pra fazer “ver mais” fazer sentido
+  const dailyHarleySorted = useMemo(
+    () => (dailyHarley ?? []).slice().sort((a, b) => String(b.day).localeCompare(String(a.day))),
+    [dailyHarley]
+  );
+  const dailyGioSorted = useMemo(
+    () => (dailyGio ?? []).slice().sort((a, b) => String(b.day).localeCompare(String(a.day))),
+    [dailyGio]
+  );
+
+  const meetingHarleySorted = useMemo(
+    () => (meetingHarley ?? []).slice().sort((a: any, b: any) => leadDateFallback(b).localeCompare(leadDateFallback(a))),
+    [meetingHarley]
+  );
+  const meetingGioSorted = useMemo(
+    () => (meetingGio ?? []).slice().sort((a: any, b: any) => leadDateFallback(b).localeCompare(leadDateFallback(a))),
+    [meetingGio]
+  );
+
+  // últimos 5 dias (comparação): pega os 5 mais recentes já ordenados desc
+  const dailyLast5Harley = useMemo(() => dailyHarleySorted.slice(0, 5), [dailyHarleySorted]);
+  const dailyLast5Gio = useMemo(() => dailyGioSorted.slice(0, 5), [dailyGioSorted]);
 
   function ProfileSection(props: {
     profile: Profile;
     dailyRows: DailyFunnel[];
     meetingRows: MeetingLead[];
     totals: Totals;
-    conv: { c_q: string; q_r: string; r_p: string; p_f: string };
+    rates: { q_from_c: string; r_from_q: string; p_from_r: string; f_from_p: string };
     last5: DailyFunnel[];
   }) {
-    const { profile, dailyRows, meetingRows, totals, conv, last5 } = props;
+    const { profile, dailyRows, meetingRows, totals, rates, last5 } = props;
+
+    // ✅ limite 7 + “ver mais”
+    const [dailyLimit, setDailyLimit] = useState(7);
+    const [leadLimit, setLeadLimit] = useState(7);
+
+    useEffect(() => {
+      setDailyLimit(7);
+      setLeadLimit(7);
+    }, [range.start, range.end]);
+
+    const dailyVisible = useMemo(() => dailyRows.slice(0, dailyLimit), [dailyRows, dailyLimit]);
+    const leadsVisible = useMemo(() => meetingRows.slice(0, leadLimit), [meetingRows, leadLimit]);
 
     return (
       <div className="space-y-6">
@@ -361,11 +397,11 @@ export default function LeadsPage() {
           right={loading ? <Pill>carregando…</Pill> : <Pill>ok</Pill>}
         >
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-5">
-            <Stat label="Contato" value={totals.contato.toLocaleString("pt-BR")} hint={`→ Qualificação: ${conv.c_q}`} />
-            <Stat label="Qualificação" value={totals.qualificacao.toLocaleString("pt-BR")} hint={`→ Reunião: ${conv.q_r}`} />
-            <Stat label="Reunião" value={totals.reuniao.toLocaleString("pt-BR")} hint={`→ Proposta: ${conv.r_p}`} />
-            <Stat label="Proposta" value={totals.proposta.toLocaleString("pt-BR")} hint={`→ Fechado: ${conv.p_f}`} />
-            <Stat label="Fechado" value={totals.fechado.toLocaleString("pt-BR")} hint="no período selecionado" />
+            <Stat label="Contato" value={totals.contato.toLocaleString("pt-BR")} hint="" />
+            <Stat label="Qualificação" value={totals.qualificacao.toLocaleString("pt-BR")} hint={rates.q_from_c} />
+            <Stat label="Reunião marcada" value={totals.reuniao.toLocaleString("pt-BR")} hint={rates.r_from_q} />
+            <Stat label="Reunião realizada" value={totals.proposta.toLocaleString("pt-BR")} hint={rates.p_from_r} />
+            <Stat label="Fechado" value={totals.fechado.toLocaleString("pt-BR")} hint={rates.f_from_p} />
           </div>
         </Card>
 
@@ -379,19 +415,31 @@ export default function LeadsPage() {
               { key: "day", header: "Data" },
               { key: "contato", header: "Contato" },
               { key: "qualificacao", header: "Qualificação" },
-              { key: "reuniao", header: "Reunião" },
-              { key: "proposta", header: "Proposta" },
+              { key: "reuniao", header: "Reunião marcada" },
+              { key: "proposta", header: "Reunião realizada" },
               { key: "fechado", header: "Fechado" },
             ]}
-            rows={dailyRows}
+            rows={dailyVisible}
             rowKey={(r) => r.id}
             actions={(r) => (
               <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => editDaily(profile, r)}>Editar</Button>
-                <Button variant="ghost" onClick={() => removeDaily(r.id)}>Excluir</Button>
+                <Button variant="outline" onClick={() => editDaily(profile, r)}>
+                  Editar
+                </Button>
+                <Button variant="ghost" onClick={() => removeDaily(r.id)}>
+                  Excluir
+                </Button>
               </div>
             )}
           />
+
+          {dailyRows.length > dailyVisible.length ? (
+            <div className="mt-3 flex justify-center">
+              <Button variant="outline" onClick={() => setDailyLimit((n) => n + 7)}>
+                Ver mais
+              </Button>
+            </div>
+          ) : null}
 
           <div className="mt-5">
             <div className="mb-2 text-sm font-semibold">Últimos 5 dias (comparação)</div>
@@ -400,8 +448,8 @@ export default function LeadsPage() {
                 { key: "day", header: "Data" },
                 { key: "contato", header: "Contato" },
                 { key: "qualificacao", header: "Qualificação" },
-                { key: "reuniao", header: "Reunião" },
-                { key: "proposta", header: "Proposta" },
+                { key: "reuniao", header: "Reunião marcada" },
+                { key: "proposta", header: "Reunião realizada" },
                 { key: "fechado", header: "Fechado" },
               ]}
               rows={last5}
@@ -412,22 +460,22 @@ export default function LeadsPage() {
           <div className="mt-5 rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
             <div className="text-sm font-semibold">Conversões do período</div>
             <div className="mt-2 flex flex-wrap gap-2 text-sm text-slate-300">
-              <Pill>Contato → Qualificação: {conv.c_q}</Pill>
-              <Pill>Qualificação → Reunião: {conv.q_r}</Pill>
-              <Pill>Reunião → Proposta: {conv.r_p}</Pill>
-              <Pill>Proposta → Fechado: {conv.p_f}</Pill>
+              <Pill>Contato → Qualificação: {rates.q_from_c}</Pill>
+              <Pill>Qualificação → Reunião marcada: {rates.r_from_q}</Pill>
+              <Pill>Reunião marcada → Reunião realizada: {rates.p_from_r}</Pill>
+              <Pill>Reunião realizada → Fechado: {rates.f_from_p}</Pill>
             </div>
           </div>
         </Card>
 
         <Card
           title="Leads de reunião"
-          subtitle='Para preencher com contatos que marcaram reunião. Inclui "data do lead" (retroativo), "contato do lead", "@ do instagram" e "faturamento médio".'
+          subtitle='Use para contatos que marcaram reunião. A coluna "Dia da reunião" usa lead_date (retroativo) e é a data principal desta página.'
           right={<Button onClick={() => openLeadModal(profile)}>Adicionar lead</Button>}
         >
           <Table
             columns={[
-              { key: "lead_date", header: "Data do lead", render: (r) => leadDateFallback(r) },
+              { key: "lead_date", header: "Dia da reunião", render: (r) => leadDateFallback(r) },
               { key: "name", header: "Nome" },
               { key: "contact", header: "Contato" },
               { key: "instagram", header: "@ Instagram" },
@@ -448,15 +496,27 @@ export default function LeadsPage() {
               },
               { key: "notes", header: "Obs." },
             ]}
-            rows={meetingRows}
+            rows={leadsVisible}
             rowKey={(r) => r.id}
             actions={(r) => (
               <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => editLead(profile, r)}>Editar</Button>
-                <Button variant="ghost" onClick={() => removeLead(r.id)}>Excluir</Button>
+                <Button variant="outline" onClick={() => editLead(profile, r)}>
+                  Editar
+                </Button>
+                <Button variant="ghost" onClick={() => removeLead(r.id)}>
+                  Excluir
+                </Button>
               </div>
             )}
           />
+
+          {meetingRows.length > leadsVisible.length ? (
+            <div className="mt-3 flex justify-center">
+              <Button variant="outline" onClick={() => setLeadLimit((n) => n + 7)}>
+                Ver mais
+              </Button>
+            </div>
+          ) : null}
         </Card>
       </div>
     );
@@ -467,34 +527,34 @@ export default function LeadsPage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="text-lg font-semibold">Leads</div>
-          <div className="text-sm text-slate-400">Seletor de datas controla o desempenho do time no período selecionado.</div>
+          <div className="text-sm text-slate-400">
+            Seletor de datas controla o desempenho do time no período selecionado.
+          </div>
         </div>
 
         <DateRange start={range.start} end={range.end} onChange={setRange} />
       </div>
 
       {err ? (
-        <div className="rounded-3xl border border-red-900/50 bg-red-950/30 px-5 py-4 text-sm text-red-200">
-          {err}
-        </div>
+        <div className="rounded-3xl border border-red-900/50 bg-red-950/30 px-5 py-4 text-sm text-red-200">{err}</div>
       ) : null}
 
       <div className="grid grid-cols-1 gap-6">
         <ProfileSection
           profile="harley"
-          dailyRows={dailyHarley}
-          meetingRows={meetingHarley}
+          dailyRows={dailyHarleySorted}
+          meetingRows={meetingHarleySorted}
           totals={totalsHarley}
-          conv={convHarley}
+          rates={ratesHarley}
           last5={dailyLast5Harley}
         />
 
         <ProfileSection
           profile="giovanni"
-          dailyRows={dailyGio}
-          meetingRows={meetingGio}
+          dailyRows={dailyGioSorted}
+          meetingRows={meetingGioSorted}
           totals={totalsGio}
-          conv={convGio}
+          rates={ratesGio}
           last5={dailyLast5Gio}
         />
       </div>
@@ -503,7 +563,9 @@ export default function LeadsPage() {
       <Modal
         open={openDaily}
         title={
-          editingDailyId ? `Editar registro diário — ${profileLabel(dailyProfile)}` : `Novo registro diário — ${profileLabel(dailyProfile)}`
+          editingDailyId
+            ? `Editar registro diário — ${profileLabel(dailyProfile)}`
+            : `Novo registro diário — ${profileLabel(dailyProfile)}`
         }
         subtitle="Preencha os números do dia. Esses dados somam nos cards do topo."
         onClose={() => setOpenDaily(false)}
@@ -512,14 +574,18 @@ export default function LeadsPage() {
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <div>
               <Label>Data</Label>
-              <Input type="date" value={dailyForm.day} onChange={(e) => setDailyForm((s) => ({ ...s, day: e.target.value }))} />
+              <Input
+                type="date"
+                value={dailyForm.day}
+                onChange={(e) => setDailyForm((s) => ({ ...s, day: e.target.value }))}
+              />
             </div>
 
             <div className="hidden md:block" />
 
             {STAGES.map((s) => (
               <div key={s}>
-                <Label>{stageLabel(s)}</Label>
+                <Label>{stageLabelLocal(s)}</Label>
                 <Input
                   type="number"
                   min={0}
@@ -531,7 +597,9 @@ export default function LeadsPage() {
           </div>
 
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setOpenDaily(false)}>Cancelar</Button>
+            <Button variant="outline" onClick={() => setOpenDaily(false)}>
+              Cancelar
+            </Button>
             <Button onClick={saveDaily}>{editingDailyId ? "Salvar alterações" : "Salvar registro"}</Button>
           </div>
         </div>
@@ -547,8 +615,12 @@ export default function LeadsPage() {
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <div>
-              <Label>Data do lead</Label>
-              <Input type="date" value={leadForm.lead_date} onChange={(e) => setLeadForm((s) => ({ ...s, lead_date: e.target.value }))} />
+              <Label>Dia da reunião</Label>
+              <Input
+                type="date"
+                value={leadForm.lead_date}
+                onChange={(e) => setLeadForm((s) => ({ ...s, lead_date: e.target.value }))}
+              />
             </div>
 
             <div className="hidden md:block" />
@@ -560,12 +632,18 @@ export default function LeadsPage() {
 
             <div>
               <Label>Contato do lead</Label>
-              <Input value={leadForm.contact} onChange={(e) => setLeadForm((s) => ({ ...s, contact: e.target.value }))} />
+              <Input
+                value={leadForm.contact}
+                onChange={(e) => setLeadForm((s) => ({ ...s, contact: e.target.value }))}
+              />
             </div>
 
             <div>
               <Label>@ do Instagram</Label>
-              <Input value={leadForm.instagram} onChange={(e) => setLeadForm((s) => ({ ...s, instagram: e.target.value }))} />
+              <Input
+                value={leadForm.instagram}
+                onChange={(e) => setLeadForm((s) => ({ ...s, instagram: e.target.value }))}
+              />
             </div>
 
             <div>
@@ -615,7 +693,7 @@ export default function LeadsPage() {
                 </div>
 
                 <div>
-                  <Label>Data do fechamento</Label>
+                  <Label>Data do fechamento (deal_date)</Label>
                   <Input
                     type="date"
                     value={leadForm.deal_date ?? todayISO()}
@@ -632,7 +710,9 @@ export default function LeadsPage() {
           </div>
 
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setOpenLead(false)}>Cancelar</Button>
+            <Button variant="outline" onClick={() => setOpenLead(false)}>
+              Cancelar
+            </Button>
             <Button onClick={saveLead}>{editingLeadId ? "Salvar alterações" : "Salvar lead"}</Button>
           </div>
         </div>
