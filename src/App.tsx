@@ -1,6 +1,4 @@
-// src/App.tsx
 import { NavLink, Route, Routes } from "react-router-dom";
-
 import MetaGlobalPage from "./pages/MetaGlobalPage";
 import OverviewPage from "./pages/OverviewPage";
 import LeadsPage from "./pages/LeadsPage";
