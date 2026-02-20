@@ -1,3 +1,5 @@
+// src/lib/utils.ts
+
 export type Profile = "harley" | "giovanni";
 
 export function brl(v: number) {
@@ -13,8 +15,12 @@ export function safeDiv(a: number, b: number) {
   return b === 0 ? 0 : a / b;
 }
 
+/**
+ * UUID real compatível com Supabase
+ * (substitui gerador antigo que quebrava inserts)
+ */
 export function uid() {
-  return Math.random().toString(36).slice(2, 10);
+  return crypto.randomUUID();
 }
 
 export function todayISO() {
@@ -26,10 +32,15 @@ export type Stage = typeof STAGES[number];
 
 export function stageLabel(s: Stage) {
   switch (s) {
-    case "contato": return "Contato";
-    case "qualificacao": return "Qualificação";
-    case "reuniao": return "Reunião";
-    case "proposta": return "Proposta";
-    case "fechado": return "Fechado";
+    case "contato":
+      return "Contato";
+    case "qualificacao":
+      return "Qualificação";
+    case "reuniao":
+      return "Reunião";
+    case "proposta":
+      return "Proposta";
+    case "fechado":
+      return "Fechado";
   }
 }
