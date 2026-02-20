@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import DateRange from "../components/DateRange";
 import { Button, Card, Input, Label, Modal, Select, Stat, Table, Pill } from "../components/ui";
-import { Profile, STAGES, Stage, pct, safeDiv, todayISO, uid, stageLabel } from "../lib/utils";
+import { Profile, pct, safeDiv, todayISO, uid } from "../lib/utils";
 import {
   DailyFunnel,
   MeetingLead,
@@ -30,28 +30,22 @@ function profileLabel(p: Profile) {
   return p === "harley" ? "Harley" : "Giovanni";
 }
 
-type Totals = Record<Stage, number>;
+type Totals = {
+  contato: number;
+  qualificacao: number;
+  reuniao_marcada: number;
+  reuniao_realizada: number;
+  fechado: number;
+};
 
-function emptyTotals(): Totals {
-  return {
-    contato: 0,
-    qualificacao: 0,
-    reuniao: 0,
-    proposta: 0,
-    fechado: 0,
-  };
-}
-
-function sumTotals(rows: DailyFunnel[]): Totals {
-  const t = emptyTotals();
+function sumDailyTop(rows: DailyFunnel[]) {
+  const out = { contato: 0, qualificacao: 0, reuniao_marcada: 0 };
   for (const r of rows) {
-    t.contato += Number(r.contato || 0);
-    t.qualificacao += Number(r.qualificacao || 0);
-    t.reuniao += Number(r.reuniao || 0);
-    t.proposta += Number(r.proposta || 0);
-    t.fechado += Number(r.fechado || 0);
+    out.contato += Number((r as any).contato || 0);
+    out.qualificacao += Number((r as any).qualificacao || 0);
+    out.reuniao_marcada += Number((r as any).reuniao || 0); // "reuniao" = reunião marcada
   }
-  return t;
+  return out;
 }
 
 function convRate(from: number, to: number) {
@@ -75,11 +69,12 @@ function maxISO(a: string, b: string) {
   return a >= b ? a : b;
 }
 
-// Renomes aprovados
-function stageLabelLocal(s: Stage) {
-  if (s === "reuniao") return "Reunião marcada";
-  if (s === "proposta") return "Reunião realizada";
-  return stageLabel(s);
+function isSale(row: any) {
+  return String(row?.status) === "venda";
+}
+
+function isRealizada(row: any) {
+  return String(row?.status) === "realizou";
 }
 
 export default function LeadsPage() {
@@ -95,11 +90,11 @@ export default function LeadsPage() {
   const [dailyHarley, setDailyHarley] = useState<DailyFunnel[]>([]);
   const [dailyGio, setDailyGio] = useState<DailyFunnel[]>([]);
 
-  // IMPORTANT: vamos buscar amplo e filtrar no front por lead_date
+  // buscar amplo e filtrar no front por lead_date
   const [meetingHarleyAll, setMeetingHarleyAll] = useState<MeetingLead[]>([]);
   const [meetingGioAll, setMeetingGioAll] = useState<MeetingLead[]>([]);
 
-  // Modal: Daily Funnel (per profile)
+  // Modal: Daily Funnel
   const [openDaily, setOpenDaily] = useState(false);
   const [dailyProfile, setDailyProfile] = useState<Profile>("harley");
   const [editingDailyId, setEditingDailyId] = useState<string | null>(null);
@@ -107,12 +102,10 @@ export default function LeadsPage() {
     day: todayISO(),
     contato: 0,
     qualificacao: 0,
-    reuniao: 0,
-    proposta: 0,
-    fechado: 0,
+    reuniao: 0, // reunião marcada
   });
 
-  // Modal: Meeting Lead (per profile)
+  // Modal: Meeting Lead
   const [openLead, setOpenLead] = useState(false);
   const [leadProfile, setLeadProfile] = useState<Profile>("harley");
   const [editingLeadId, setEditingLeadId] = useState<string | null>(null);
@@ -122,7 +115,10 @@ export default function LeadsPage() {
     contact: "",
     instagram: "",
     avg_revenue: 0,
+
+    // compat com banco: lead nasce "marcou" (pendente)
     status: "marcou" as MeetingLead["status"],
+
     deal_value: null as number | null,
     deal_date: null as string | null,
     notes: "",
@@ -136,8 +132,6 @@ export default function LeadsPage() {
       contato: 0,
       qualificacao: 0,
       reuniao: 0,
-      proposta: 0,
-      fechado: 0,
     });
   }
 
@@ -168,7 +162,6 @@ export default function LeadsPage() {
         listDailyFunnel("harley", range.start, range.end),
         listDailyFunnel("giovanni", range.start, range.end),
 
-        // ✅ busca ampla (senão lead com lead_date em janeiro mas created_at em fevereiro some)
         listMeetingLeads("harley", "2000-01-01", queryEnd),
         listMeetingLeads("giovanni", "2000-01-01", queryEnd),
       ]);
@@ -189,7 +182,7 @@ export default function LeadsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range.start, range.end]);
 
-  // ✅ Filtra por lead_date (fallback created_at) no período selecionado
+  // Filtra por lead_date (dia da reunião)
   const meetingHarley = useMemo(() => {
     return (meetingHarleyAll ?? []).filter((r: any) => inRange(leadDateFallback(r), range.start, range.end));
   }, [meetingHarleyAll, range.start, range.end]);
@@ -198,17 +191,44 @@ export default function LeadsPage() {
     return (meetingGioAll ?? []).filter((r: any) => inRange(leadDateFallback(r), range.start, range.end));
   }, [meetingGioAll, range.start, range.end]);
 
-  const totalsHarley = useMemo(() => sumTotals(dailyHarley), [dailyHarley]);
-  const totalsGio = useMemo(() => sumTotals(dailyGio), [dailyGio]);
+  // Totais do topo:
+  // - contato/qualificação/reunião marcada: daily_funnel
+  // - reunião realizada/fechado: status do lead
+  const totalsHarley = useMemo(() => {
+    const top = sumDailyTop(dailyHarley);
+    const realizados = (meetingHarley ?? []).filter(isRealizada).length;
+    const fechados = (meetingHarley ?? []).filter(isSale).length;
 
-  // % dentro do card (sem setinha)
+    return {
+      contato: top.contato,
+      qualificacao: top.qualificacao,
+      reuniao_marcada: top.reuniao_marcada,
+      reuniao_realizada: realizados,
+      fechado: fechados,
+    } as Totals;
+  }, [dailyHarley, meetingHarley]);
+
+  const totalsGio = useMemo(() => {
+    const top = sumDailyTop(dailyGio);
+    const realizados = (meetingGio ?? []).filter(isRealizada).length;
+    const fechados = (meetingGio ?? []).filter(isSale).length;
+
+    return {
+      contato: top.contato,
+      qualificacao: top.qualificacao,
+      reuniao_marcada: top.reuniao_marcada,
+      reuniao_realizada: realizados,
+      fechado: fechados,
+    } as Totals;
+  }, [dailyGio, meetingGio]);
+
   const ratesHarley = useMemo(() => {
     const t = totalsHarley;
     return {
       q_from_c: convRate(t.contato, t.qualificacao),
-      r_from_q: convRate(t.qualificacao, t.reuniao),
-      p_from_r: convRate(t.reuniao, t.proposta),
-      f_from_p: convRate(t.proposta, t.fechado),
+      r_from_q: convRate(t.qualificacao, t.reuniao_marcada),
+      p_from_r: convRate(t.reuniao_marcada, t.reuniao_realizada),
+      f_from_p: convRate(t.reuniao_realizada, t.fechado),
     };
   }, [totalsHarley]);
 
@@ -216,9 +236,9 @@ export default function LeadsPage() {
     const t = totalsGio;
     return {
       q_from_c: convRate(t.contato, t.qualificacao),
-      r_from_q: convRate(t.qualificacao, t.reuniao),
-      p_from_r: convRate(t.reuniao, t.proposta),
-      f_from_p: convRate(t.proposta, t.fechado),
+      r_from_q: convRate(t.qualificacao, t.reuniao_marcada),
+      p_from_r: convRate(t.reuniao_marcada, t.reuniao_realizada),
+      f_from_p: convRate(t.reuniao_realizada, t.fechado),
     };
   }, [totalsGio]);
 
@@ -229,14 +249,12 @@ export default function LeadsPage() {
 
   function editDaily(profile: Profile, row: DailyFunnel) {
     setDailyProfile(profile);
-    setEditingDailyId(row.id);
+    setEditingDailyId((row as any).id);
     setDailyForm({
-      day: row.day,
-      contato: Number(row.contato || 0),
-      qualificacao: Number(row.qualificacao || 0),
-      reuniao: Number(row.reuniao || 0),
-      proposta: Number(row.proposta || 0),
-      fechado: Number(row.fechado || 0),
+      day: (row as any).day,
+      contato: Number((row as any).contato || 0),
+      qualificacao: Number((row as any).qualificacao || 0),
+      reuniao: Number((row as any).reuniao || 0),
     });
     setOpenDaily(true);
   }
@@ -251,8 +269,10 @@ export default function LeadsPage() {
         contato: Number(dailyForm.contato || 0),
         qualificacao: Number(dailyForm.qualificacao || 0),
         reuniao: Number(dailyForm.reuniao || 0),
-        proposta: Number(dailyForm.proposta || 0),
-        fechado: Number(dailyForm.fechado || 0),
+
+        // mantém compat com schema (se as colunas existirem)
+        proposta: 0 as any,
+        fechado: 0 as any,
       };
 
       await upsertDailyFunnel(payload);
@@ -281,18 +301,18 @@ export default function LeadsPage() {
 
   function editLead(profile: Profile, row: MeetingLead) {
     setLeadProfile(profile);
-    setEditingLeadId(row.id);
+    setEditingLeadId((row as any).id);
 
     setLeadForm({
       lead_date: (row as any).lead_date ?? (row.created_at ? String(row.created_at).slice(0, 10) : todayISO()),
-      name: row.name ?? "",
-      contact: row.contact ?? "",
-      instagram: row.instagram ?? "",
-      avg_revenue: Number(row.avg_revenue || 0),
-      status: row.status,
+      name: (row as any).name ?? "",
+      contact: (row as any).contact ?? "",
+      instagram: (row as any).instagram ?? "",
+      avg_revenue: Number((row as any).avg_revenue || 0),
+      status: ((row as any).status ?? "marcou") as any,
       deal_value: (row as any).deal_value ?? null,
       deal_date: (row as any).deal_date ?? null,
-      notes: row.notes ?? "",
+      notes: (row as any).notes ?? "",
     });
 
     setOpenLead(true);
@@ -344,13 +364,12 @@ export default function LeadsPage() {
     }
   }
 
-  // ordenação (mais recente primeiro) pra fazer “ver mais” fazer sentido
   const dailyHarleySorted = useMemo(
-    () => (dailyHarley ?? []).slice().sort((a, b) => String(b.day).localeCompare(String(a.day))),
+    () => (dailyHarley ?? []).slice().sort((a, b) => String((b as any).day).localeCompare(String((a as any).day))),
     [dailyHarley]
   );
   const dailyGioSorted = useMemo(
-    () => (dailyGio ?? []).slice().sort((a, b) => String(b.day).localeCompare(String(a.day))),
+    () => (dailyGio ?? []).slice().sort((a, b) => String((b as any).day).localeCompare(String((a as any).day))),
     [dailyGio]
   );
 
@@ -363,7 +382,6 @@ export default function LeadsPage() {
     [meetingGio]
   );
 
-  // últimos 5 dias (comparação): pega os 5 mais recentes já ordenados desc
   const dailyLast5Harley = useMemo(() => dailyHarleySorted.slice(0, 5), [dailyHarleySorted]);
   const dailyLast5Gio = useMemo(() => dailyGioSorted.slice(0, 5), [dailyGioSorted]);
 
@@ -377,7 +395,6 @@ export default function LeadsPage() {
   }) {
     const { profile, dailyRows, meetingRows, totals, rates, last5 } = props;
 
-    // ✅ limite 7 + “ver mais”
     const [dailyLimit, setDailyLimit] = useState(7);
     const [leadLimit, setLeadLimit] = useState(7);
 
@@ -399,15 +416,23 @@ export default function LeadsPage() {
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-5">
             <Stat label="Contato" value={totals.contato.toLocaleString("pt-BR")} hint="" />
             <Stat label="Qualificação" value={totals.qualificacao.toLocaleString("pt-BR")} hint={rates.q_from_c} />
-            <Stat label="Reunião marcada" value={totals.reuniao.toLocaleString("pt-BR")} hint={rates.r_from_q} />
-            <Stat label="Reunião realizada" value={totals.proposta.toLocaleString("pt-BR")} hint={rates.p_from_r} />
+            <Stat
+              label="Reunião marcada"
+              value={totals.reuniao_marcada.toLocaleString("pt-BR")}
+              hint={rates.r_from_q}
+            />
+            <Stat
+              label="Reunião realizada"
+              value={totals.reuniao_realizada.toLocaleString("pt-BR")}
+              hint={rates.p_from_r}
+            />
             <Stat label="Fechado" value={totals.fechado.toLocaleString("pt-BR")} hint={rates.f_from_p} />
           </div>
         </Card>
 
         <Card
           title="Registros diários"
-          subtitle="Seu time preenche diariamente. Você pode editar retroativamente."
+          subtitle="SDR preenche só: Contato, Qualificação e Reunião marcada."
           right={<Button onClick={() => openDailyModal(profile)}>Imput de dados</Button>}
         >
           <Table
@@ -416,17 +441,15 @@ export default function LeadsPage() {
               { key: "contato", header: "Contato" },
               { key: "qualificacao", header: "Qualificação" },
               { key: "reuniao", header: "Reunião marcada" },
-              { key: "proposta", header: "Reunião realizada" },
-              { key: "fechado", header: "Fechado" },
             ]}
             rows={dailyVisible}
-            rowKey={(r) => r.id}
+            rowKey={(r) => (r as any).id}
             actions={(r) => (
               <div className="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => editDaily(profile, r)}>
                   Editar
                 </Button>
-                <Button variant="ghost" onClick={() => removeDaily(r.id)}>
+                <Button variant="ghost" onClick={() => removeDaily((r as any).id)}>
                   Excluir
                 </Button>
               </div>
@@ -449,11 +472,9 @@ export default function LeadsPage() {
                 { key: "contato", header: "Contato" },
                 { key: "qualificacao", header: "Qualificação" },
                 { key: "reuniao", header: "Reunião marcada" },
-                { key: "proposta", header: "Reunião realizada" },
-                { key: "fechado", header: "Fechado" },
               ]}
               rows={last5}
-              rowKey={(r) => `last5-${r.id}`}
+              rowKey={(r) => `last5-${(r as any).id}`}
             />
           </div>
 
@@ -470,7 +491,7 @@ export default function LeadsPage() {
 
         <Card
           title="Leads de reunião"
-          subtitle='Use para contatos que marcaram reunião. A coluna "Dia da reunião" usa lead_date (retroativo) e é a data principal desta página.'
+          subtitle='Use para contatos que marcaram reunião. "Dia da reunião" usa lead_date e é a data principal desta página.'
           right={<Button onClick={() => openLeadModal(profile)}>Adicionar lead</Button>}
         >
           <Table
@@ -483,9 +504,9 @@ export default function LeadsPage() {
                 key: "avg_revenue",
                 header: "Faturamento médio",
                 render: (r) =>
-                  Number(r.avg_revenue || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }),
+                  Number((r as any).avg_revenue || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }),
               },
-              { key: "status", header: "Status", render: (r) => <Pill>{String(r.status)}</Pill> },
+              { key: "status", header: "Status", render: (r) => <Pill>{String((r as any).status)}</Pill> },
               {
                 key: "deal_value",
                 header: "Venda (R$)",
@@ -497,13 +518,13 @@ export default function LeadsPage() {
               { key: "notes", header: "Obs." },
             ]}
             rows={leadsVisible}
-            rowKey={(r) => r.id}
+            rowKey={(r) => (r as any).id}
             actions={(r) => (
               <div className="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => editLead(profile, r)}>
                   Editar
                 </Button>
-                <Button variant="ghost" onClick={() => removeLead(r.id)}>
+                <Button variant="ghost" onClick={() => removeLead((r as any).id)}>
                   Excluir
                 </Button>
               </div>
@@ -527,9 +548,7 @@ export default function LeadsPage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="text-lg font-semibold">Leads</div>
-          <div className="text-sm text-slate-400">
-            Seletor de datas controla o desempenho do time no período selecionado.
-          </div>
+          <div className="text-sm text-slate-400">Seletor de datas controla o desempenho do time no período selecionado.</div>
         </div>
 
         <DateRange start={range.start} end={range.end} onChange={setRange} />
@@ -567,33 +586,32 @@ export default function LeadsPage() {
             ? `Editar registro diário — ${profileLabel(dailyProfile)}`
             : `Novo registro diário — ${profileLabel(dailyProfile)}`
         }
-        subtitle="Preencha os números do dia. Esses dados somam nos cards do topo."
+        subtitle="SDR preenche só: Contato, Qualificação e Reunião marcada."
         onClose={() => setOpenDaily(false)}
       >
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <div>
               <Label>Data</Label>
-              <Input
-                type="date"
-                value={dailyForm.day}
-                onChange={(e) => setDailyForm((s) => ({ ...s, day: e.target.value }))}
-              />
+              <Input type="date" value={dailyForm.day} onChange={(e) => setDailyForm((s) => ({ ...s, day: e.target.value }))} />
             </div>
 
             <div className="hidden md:block" />
 
-            {STAGES.map((s) => (
-              <div key={s}>
-                <Label>{stageLabelLocal(s)}</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  value={(dailyForm as any)[s]}
-                  onChange={(e) => setDailyForm((prev) => ({ ...prev, [s]: Number(e.target.value || 0) }))}
-                />
-              </div>
-            ))}
+            <div>
+              <Label>Contato</Label>
+              <Input type="number" min={0} value={dailyForm.contato} onChange={(e) => setDailyForm((s) => ({ ...s, contato: Number(e.target.value || 0) }))} />
+            </div>
+
+            <div>
+              <Label>Qualificação</Label>
+              <Input type="number" min={0} value={dailyForm.qualificacao} onChange={(e) => setDailyForm((s) => ({ ...s, qualificacao: Number(e.target.value || 0) }))} />
+            </div>
+
+            <div>
+              <Label>Reunião marcada</Label>
+              <Input type="number" min={0} value={dailyForm.reuniao} onChange={(e) => setDailyForm((s) => ({ ...s, reuniao: Number(e.target.value || 0) }))} />
+            </div>
           </div>
 
           <div className="flex justify-end gap-2">
@@ -609,18 +627,14 @@ export default function LeadsPage() {
       <Modal
         open={openLead}
         title={editingLeadId ? `Editar lead — ${profileLabel(leadProfile)}` : `Novo lead — ${profileLabel(leadProfile)}`}
-        subtitle="Use para leads que marcaram reunião. Depois atualize status."
+        subtitle="Lead nasce pendente. Depois atualize para: reunião realizada / no-show / venda."
         onClose={() => setOpenLead(false)}
       >
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <div>
               <Label>Dia da reunião</Label>
-              <Input
-                type="date"
-                value={leadForm.lead_date}
-                onChange={(e) => setLeadForm((s) => ({ ...s, lead_date: e.target.value }))}
-              />
+              <Input type="date" value={leadForm.lead_date} onChange={(e) => setLeadForm((s) => ({ ...s, lead_date: e.target.value }))} />
             </div>
 
             <div className="hidden md:block" />
@@ -632,29 +646,17 @@ export default function LeadsPage() {
 
             <div>
               <Label>Contato do lead</Label>
-              <Input
-                value={leadForm.contact}
-                onChange={(e) => setLeadForm((s) => ({ ...s, contact: e.target.value }))}
-              />
+              <Input value={leadForm.contact} onChange={(e) => setLeadForm((s) => ({ ...s, contact: e.target.value }))} />
             </div>
 
             <div>
               <Label>@ do Instagram</Label>
-              <Input
-                value={leadForm.instagram}
-                onChange={(e) => setLeadForm((s) => ({ ...s, instagram: e.target.value }))}
-              />
+              <Input value={leadForm.instagram} onChange={(e) => setLeadForm((s) => ({ ...s, instagram: e.target.value }))} />
             </div>
 
             <div>
               <Label>Faturamento médio (do lead)</Label>
-              <Input
-                type="number"
-                step="0.01"
-                min={0}
-                value={leadForm.avg_revenue}
-                onChange={(e) => setLeadForm((s) => ({ ...s, avg_revenue: Number(e.target.value || 0) }))}
-              />
+              <Input type="number" step="0.01" min={0} value={leadForm.avg_revenue} onChange={(e) => setLeadForm((s) => ({ ...s, avg_revenue: Number(e.target.value || 0) }))} />
             </div>
 
             <div>
@@ -671,10 +673,14 @@ export default function LeadsPage() {
                   }));
                 }}
               >
-                <option value="marcou">marcou</option>
-                <option value="realizou">realizou</option>
-                <option value="no_show">no_show</option>
-                <option value="proposta">proposta</option>
+                {leadForm.status === "marcou" ? (
+                  <option value="marcou" disabled>
+                    pendente (marcou)
+                  </option>
+                ) : null}
+
+                <option value="realizou">reunião realizada</option>
+                <option value="no_show">no-show</option>
                 <option value="venda">venda</option>
               </Select>
             </div>
@@ -683,22 +689,12 @@ export default function LeadsPage() {
               <>
                 <div>
                   <Label>Valor da venda (R$)</Label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min={0}
-                    value={leadForm.deal_value ?? 0}
-                    onChange={(e) => setLeadForm((s) => ({ ...s, deal_value: Number(e.target.value || 0) }))}
-                  />
+                  <Input type="number" step="0.01" min={0} value={leadForm.deal_value ?? 0} onChange={(e) => setLeadForm((s) => ({ ...s, deal_value: Number(e.target.value || 0) }))} />
                 </div>
 
                 <div>
                   <Label>Data do fechamento (deal_date)</Label>
-                  <Input
-                    type="date"
-                    value={leadForm.deal_date ?? todayISO()}
-                    onChange={(e) => setLeadForm((s) => ({ ...s, deal_date: e.target.value }))}
-                  />
+                  <Input type="date" value={leadForm.deal_date ?? todayISO()} onChange={(e) => setLeadForm((s) => ({ ...s, deal_date: e.target.value }))} />
                 </div>
               </>
             )}
