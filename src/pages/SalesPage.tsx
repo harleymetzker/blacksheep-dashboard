@@ -76,7 +76,7 @@ export default function SalesPage() {
         listDailyFunnel("harley", range.start, range.end),
         listDailyFunnel("giovanni", range.start, range.end),
 
-        // IMPORTANT: buscar leads em range amplo e filtrar no front por lead_date/deal_date
+        // IMPORTANTE: buscar amplo e filtrar no front por lead_date/deal_date
         listMeetingLeads("harley", "2000-01-01", queryEnd),
         listMeetingLeads("giovanni", "2000-01-01", queryEnd),
       ]);
@@ -111,6 +111,7 @@ export default function SalesPage() {
     return rows.reduce((s, r) => s + Number(r?.[stage] || 0), 0);
   }
 
+  // reuniao aqui = REUNIÃO MARCADA (daily funnel)
   const funnelByProfile = useMemo(() => {
     return {
       harley: {
@@ -160,16 +161,24 @@ export default function SalesPage() {
     (["harley", "giovanni"] as Profile[]).forEach((p) => {
       const spend = spendByProfile[p];
       const conversas = funnelByProfile[p].contato;
-      const reunioes = funnelByProfile[p].reuniao;
+      const reunioesMarcadas = funnelByProfile[p].reuniao;
 
       const vendas = salesInPeriod(p);
       const totalVendas = vendas.length;
 
+      const totalVendido = (vendas ?? []).reduce((acc: number, r: any) => acc + dealValue(r), 0);
+
       const custoPorConversa = safeDiv(spend, conversas);
-      const custoPorReuniao = safeDiv(spend, reunioes);
+      const custoPorReuniaoMarcada = safeDiv(spend, reunioesMarcadas);
       const custoPorVenda = totalVendas > 0 ? safeDiv(spend, totalVendas) : 0;
 
-      out[p] = { totalVendas, custoPorConversa, custoPorReuniao, custoPorVenda };
+      out[p] = {
+        totalVendas,
+        totalVendido,
+        custoPorConversa,
+        custoPorReuniaoMarcada,
+        custoPorVenda,
+      };
     });
 
     return out;
@@ -185,10 +194,11 @@ export default function SalesPage() {
           subtitle={`Período: ${range.start} → ${range.end}`}
           right={loading ? <Pill>carregando…</Pill> : <Pill>ok</Pill>}
         >
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-5">
             <Stat label="Total de vendas" value={String(kpis[profile].totalVendas || 0)} />
+            <Stat label="Total vendido (R$)" value={brl(kpis[profile].totalVendido || 0)} />
             <Stat label="Custo por conversa" value={brl(kpis[profile].custoPorConversa || 0)} />
-            <Stat label="Custo por reunião" value={brl(kpis[profile].custoPorReuniao || 0)} />
+            <Stat label="Custo por reunião marcada" value={brl(kpis[profile].custoPorReuniaoMarcada || 0)} />
             <Stat label="Custo por venda" value={brl(kpis[profile].custoPorVenda || 0)} />
           </div>
         </Card>
@@ -225,7 +235,9 @@ export default function SalesPage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="text-lg font-semibold">Vendas</div>
-          <div className="text-sm text-slate-400">KPIs e pipeline por período (venda conta por deal_date).</div>
+          <div className="text-sm text-slate-400">
+            KPIs e pipeline por período (venda conta por deal_date).
+          </div>
         </div>
 
         <DateRange start={range.start} end={range.end} onChange={setRange} />
