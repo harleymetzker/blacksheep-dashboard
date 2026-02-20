@@ -20,7 +20,16 @@ export function safeDiv(a: number, b: number) {
  * (substitui gerador antigo que quebrava inserts)
  */
 export function uid() {
-  return crypto.randomUUID();
+  // Supabase costuma usar uuid. Isso garante UUID válido.
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  // fallback (bem raro)
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 }
 
 export function todayISO() {
