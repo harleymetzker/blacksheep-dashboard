@@ -33,7 +33,7 @@ export default function App() {
 
           <nav className="flex gap-2">
             <NavItem to="/meta-global">Meta Global</NavItem>
-            <NavItem to="/">Visão geral</NavItem>
+            <NavItem to="/">Meta Ads</NavItem>
             <NavItem to="/leads">Leads</NavItem>
             <NavItem to="/sales">Vendas</NavItem>
             <NavItem to="/finance">Financeiro</NavItem>
