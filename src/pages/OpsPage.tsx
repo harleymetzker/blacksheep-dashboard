@@ -766,21 +766,18 @@ export default function OpsPage() {
           rows={customers as any}
           rowKey={(r: any) => r.id}
           actions={(r: any) => (
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => openCustomerDetails(r)}>
-                Ver
-              </Button>
-              <Button variant="outline" onClick={() => openAddRenewal(r)}>
-                Marcar renovação
-              </Button>
-              <Button variant="outline" onClick={() => openEditCustomer(r)}>
-                Editar
-              </Button>
-              <Button variant="ghost" onClick={() => removeCustomer(String(r.id))}>
-                Excluir
-              </Button>
-            </div>
-          )}
+  <div className="flex justify-end gap-2">
+    <Button variant="outline" onClick={() => openAddRenewal(r)}>
+      Marcar renovação
+    </Button>
+    <Button variant="outline" onClick={() => openEditCustomer(r)}>
+      Editar
+    </Button>
+    <Button variant="ghost" onClick={() => removeCustomer(r.id)}>
+      Excluir
+    </Button>
+  </div>
+)}
         />
       </Card>
 
