@@ -1,4 +1,3 @@
-// src/lib/db.ts
 import { supabase } from "./supabase";
 import { Profile } from "./utils";
 
@@ -91,35 +90,52 @@ export type OpsImportantItem = {
 };
 
 /**
- * Customer Success dentro da Operação
- * Colunas esperadas em ops_customers:
+ * ops_customers (tabela)
+ * Campos mínimos esperados:
  * - id uuid (pk)
  * - entry_date date
  * - name text
  * - phone text
- * - product text
+ * - active_product text  (ou product; ajuste na sua página se necessário)
  * - paid_value numeric
  * - renewal_date date
  * - notes text (nullable)
- * - created_at timestamp
- *
- * Campos opcionais abaixo só se você quiser adicionar no futuro (não quebra o upsert via Partial).
+ * - churned_at date (nullable)
+ * - created_at timestamptz
  */
 export type OpsCustomer = {
   id: string;
   created_at?: string;
 
-  entry_date: string; // YYYY-MM-DD
+  entry_date: string | null; // YYYY-MM-DD
   name: string;
-  phone: string;
-  product: string;
-  paid_value: number;
-  renewal_date: string; // YYYY-MM-DD
-  notes?: string | null;
+  phone: string | null;
 
-  // opcionais (se existirem na tabela)
-  last_renewal_date?: string | null;
-  churn_date?: string | null;
+  // use o nome real da sua coluna (se for "product", troque aqui e na página)
+  active_product: string | null;
+
+  paid_value: number | null;
+  renewal_date: string | null; // YYYY-MM-DD
+  notes: string | null;
+
+  churned_at?: string | null; // YYYY-MM-DD
+};
+
+/**
+ * VIEW ops_customers_with_ltv
+ * Retorna todos os campos de OpsCustomer + ltv (numeric)
+ */
+export type OpsCustomerWithLTV = OpsCustomer & {
+  ltv: number | null;
+};
+
+export type OpsCustomerRenewal = {
+  id: string;
+  created_at?: string;
+  customer_id: string;
+  renewal_date: string; // YYYY-MM-DD
+  paid_value: number | null;
+  notes: string | null;
 };
 
 function mustConfigured() {
@@ -247,7 +263,6 @@ export async function deleteFinance(id: string) {
 export async function listBankBalances() {
   mustConfigured();
   const { data, error } = await supabase.from("bank_balances").select("*").order("day", { ascending: false });
-
   if (error) throw error;
   return (data ?? []) as BankBalanceEntry[];
 }
@@ -309,15 +324,19 @@ export async function deleteOpsImportantItem(id: string) {
 
 /* ---------------- Ops Customers (CS) ---------------- */
 
+/**
+ * LISTA via VIEW (para vir com LTV).
+ * Upsert/delete continuam na tabela ops_customers.
+ */
 export async function listOpsCustomers() {
   mustConfigured();
   const { data, error } = await supabase
-    .from("ops_customers")
+    .from("ops_customers_with_ltv")
     .select("*")
     .order("renewal_date", { ascending: true });
 
   if (error) throw error;
-  return (data ?? []) as OpsCustomer[];
+  return (data ?? []) as OpsCustomerWithLTV[];
 }
 
 export async function upsertOpsCustomer(row: Partial<OpsCustomer>) {
@@ -333,35 +352,28 @@ export async function deleteOpsCustomer(id: string) {
   if (error) throw error;
 }
 
-// =============================
-// OPS CUSTOMER RENEWALS
-// =============================
+/* ---------------- Ops Customer Renewals ---------------- */
 
-export type OpsCustomerRenewal = {
-  id: string;
-  created_at?: string;
-  customer_id: string;
-  renewal_date: string;
-  paid_value: number | null;
-  notes: string | null;
-};
-
-export async function listOpsCustomerRenewals(): Promise<OpsCustomerRenewal[]> {
+export async function listOpsCustomerRenewals() {
+  mustConfigured();
   const { data, error } = await supabase
     .from("ops_customer_renewals")
     .select("*")
     .order("renewal_date", { ascending: false });
 
   if (error) throw error;
-  return data ?? [];
+  return (data ?? []) as OpsCustomerRenewal[];
 }
 
 export async function upsertOpsCustomerRenewal(row: Partial<OpsCustomerRenewal>) {
-  const { error } = await supabase.from("ops_customer_renewals").upsert(row);
+  mustConfigured();
+  const { data, error } = await supabase.from("ops_customer_renewals").upsert(row).select("*").single();
   if (error) throw error;
+  return data as OpsCustomerRenewal;
 }
 
 export async function deleteOpsCustomerRenewal(id: string) {
+  mustConfigured();
   const { error } = await supabase.from("ops_customer_renewals").delete().eq("id", id);
   if (error) throw error;
 }
