@@ -500,40 +500,53 @@ export default function OpsPage() {
   }
 
   async function saveRenewal() {
-    setErr(null);
-    try {
-      if (!renewalCustomer) return;
+  setErr(null);
+  try {
+    if (!renewalCustomer) return;
 
-      const cid = String((renewalCustomer as any).id);
-      const paid = renewalForm.paid_value ? safeNum(renewalForm.paid_value) : null;
+    // 1) grava a renovação (histórico)
+    const renewalPayload: Partial<OpsCustomerRenewal> = {
+      id: uid(),
+      customer_id: renewalCustomer.id,
+      renewal_date: renewalForm.renewal_date || todayISO(),
+      paid_value: renewalForm.paid_value ? safeNum(renewalForm.paid_value) : null,
+      notes: renewalForm.notes.trim() || null,
+    };
 
-      // 1) registra a renovação
-      const renewalPayload: Partial<OpsCustomerRenewal> = {
-        id: uuid(),
-        customer_id: cid,
-        renewal_date: renewalForm.renewal_date || todayISO(),
-        paid_value: paid,
-        notes: renewalForm.notes.trim() || null,
-      };
+    await upsertOpsCustomerRenewal(renewalPayload);
 
-      await upsertOpsCustomerRenewal(renewalPayload);
+    // 2) opcional (recomendado): atualiza o cliente com o "valor atual" (paid_value)
+    // IMPORTANTE: manda 'name' junto pra nunca cair em NOT NULL se o Supabase tentar inserir.
+    const currentProduct = String((renewalCustomer as any).product ?? (renewalCustomer as any).active_product ?? "").trim();
 
-      // 2) atualiza o cliente: valor atual + próximo vencimento
-      const customerUpdate: Partial<OpsCustomer> = {
-        id: cid,
-        renewal_date: renewalForm.next_renewal_date || null,
-        ...(paid != null ? ({ paid_value: paid } as any) : ({} as any)),
-      };
+    await upsertOpsCustomer({
+      id: renewalCustomer.id,
 
-      await upsertOpsCustomer(customerUpdate);
+      // campos NOT NULL (evita o erro)
+      name: String((renewalCustomer as any).name ?? "").trim() || "Sem nome",
+      entry_date: (renewalCustomer as any).entry_date ?? todayISO(),
 
-      setOpenRenewalAdd(false);
-      setRenewalCustomer(null);
-      await refresh();
-    } catch (e: any) {
-      setErr(e?.message ?? "Erro ao registrar renovação.");
-    }
+      // campos opcionais
+      phone: (renewalCustomer as any).phone ?? null,
+      ...(currentProduct
+        ? ({ product: currentProduct, active_product: currentProduct } as any)
+        : ({} as any)),
+
+      // aqui vira o "valor atual"
+      paid_value: renewalForm.paid_value ? safeNum(renewalForm.paid_value) : (renewalCustomer as any).paid_value ?? null,
+
+      // NÃO mexo na renewal_date do cliente aqui porque depende da sua regra (mensal/anual etc).
+      // Se você quiser atualizar o próximo vencimento automaticamente, me diga a regra.
+      renewal_date: (renewalCustomer as any).renewal_date ?? null,
+    } as any);
+
+    setOpenRenewalAdd(false);
+    setRenewalCustomer(null);
+    await refresh();
+  } catch (e: any) {
+    setErr(e?.message ?? "Erro ao registrar renovação.");
   }
+}
 
   async function removeRenewal(id: string) {
     if (!confirm("Excluir esta renovação?")) return;
