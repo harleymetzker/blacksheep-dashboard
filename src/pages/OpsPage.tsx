@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Button, Card, Input, Label, Modal, Select, Pill, Table } from "../components/ui";
-import { uid, todayISO } from "../lib/utils";
+import { uid } from "../lib/utils";
 import {
   OpsTask,
   deleteOps,
@@ -10,10 +10,11 @@ import {
   deleteOpsImportantItem,
   listOpsImportantItems,
   upsertOpsImportantItem,
-  CSClient,
-  deleteCSClient,
-  listCSClients,
-  upsertCSClient,
+  // Customer Success
+  OpsCustomer,
+  deleteOpsCustomer,
+  listOpsCustomers,
+  upsertOpsCustomer,
 } from "../lib/db";
 
 type OpsStatus = OpsTask["status"];
@@ -32,7 +33,7 @@ function categoryLabel(c: ImportantCategory) {
   if (c === "login") return "Login/Senha";
   if (c === "link") return "Link útil";
   if (c === "material") return "Material";
-  if (c === "processos_internos") return "Processos internos";
+  if (c === "procedimento") return "Processos internos";
   return "Outro";
 }
 
@@ -45,21 +46,14 @@ function isValidUrl(url: string) {
   }
 }
 
-function isoDate(v?: string | null) {
-  if (!v) return "";
-  return String(v).slice(0, 10);
+function safeISODate(v: any): string {
+  const s = String(v ?? "").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : "";
 }
 
-function addDaysISO(dayISO: string, days: number) {
-  const d = new Date(dayISO + "T00:00:00");
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-function diffDays(aISO: string, bISO: string) {
-  const a = new Date(aISO + "T00:00:00").getTime();
-  const b = new Date(bISO + "T00:00:00").getTime();
-  return Math.floor((b - a) / (1000 * 60 * 60 * 24));
+function brl(n: any) {
+  const v = Number(n || 0);
+  return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
 export default function OpsPage() {
@@ -68,28 +62,26 @@ export default function OpsPage() {
 
   const [tasks, setTasks] = useState<OpsTask[]>([]);
   const [items, setItems] = useState<OpsImportantItem[]>([]);
-  const [clients, setClients] = useState<CSClient[]>([]);
+  const [customers, setCustomers] = useState<OpsCustomer[]>([]);
 
-  // ---------- Tasks: view modal ----------
+  // Tasks: view modal
   const [openTaskView, setOpenTaskView] = useState(false);
   const [viewTask, setViewTask] = useState<OpsTask | null>(null);
 
-  // ---------- Tasks: add/edit modal ----------
+  // Tasks: add/edit modal
   const [openTaskEdit, setOpenTaskEdit] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
-
   const [taskForm, setTaskForm] = useState({
     title: "",
     description: "",
     owner: "",
-    due: "" as string, // ISO yyyy-mm-dd
+    due: "" as string,
     status: "em_andamento" as OpsStatus,
   });
 
-  // ---------- Important items: add/edit modal ----------
+  // Important items: add/edit modal
   const [openItemEdit, setOpenItemEdit] = useState(false);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
-
   const [itemForm, setItemForm] = useState({
     category: "link" as ImportantCategory,
     title: "",
@@ -97,32 +89,31 @@ export default function OpsPage() {
     url: "",
   });
 
-  // ---------- CS: add/edit modal ----------
-  const [openClientEdit, setOpenClientEdit] = useState(false);
-  const [editingClientId, setEditingClientId] = useState<string | null>(null);
+  // CS: view modal
+  const [openCustomerView, setOpenCustomerView] = useState(false);
+  const [viewCustomer, setViewCustomer] = useState<OpsCustomer | null>(null);
 
-  const [clientForm, setClientForm] = useState({
-    entry_date: todayISO(),
+  // CS: add/edit modal
+  const [openCustomerEdit, setOpenCustomerEdit] = useState(false);
+  const [editingCustomerId, setEditingCustomerId] = useState<string | null>(null);
+  const [customerForm, setCustomerForm] = useState({
+    entry_date: "",
     name: "",
     phone: "",
     product: "",
-    amount_paid: 0,
-    renewal_date: addDaysISO(todayISO(), 30),
-    renewed: false,
+    paid_value: 0,
+    renewal_date: "",
+    notes: "",
   });
-
-  // ---------- CS: popup from “Vencimentos próximos” ----------
-  const [openClientView, setOpenClientView] = useState(false);
-  const [viewClient, setViewClient] = useState<CSClient | null>(null);
 
   async function refresh() {
     setLoading(true);
     setErr(null);
     try {
-      const [t, it, cs] = await Promise.all([listOps(), listOpsImportantItems(), listCSClients()]);
+      const [t, it, cs] = await Promise.all([listOps(), listOpsImportantItems(), listOpsCustomers()]);
       setTasks(t ?? []);
       setItems(it ?? []);
-      setClients(cs ?? []);
+      setCustomers(cs ?? []);
     } catch (e: any) {
       setErr(e?.message ?? "Erro ao carregar dados.");
     } finally {
@@ -147,11 +138,10 @@ export default function OpsPage() {
       map[s].push(t);
     }
 
-    // ordena: com due primeiro, depois created_at desc
     for (const s of STATUS_ORDER) {
       map[s] = map[s].slice().sort((a, b) => {
-        const ad = a.due ? String(a.due) : "9999-12-31";
-        const bd = b.due ? String(b.due) : "9999-12-31";
+        const ad = a.due ? String(a.due).slice(0, 10) : "9999-12-31";
+        const bd = b.due ? String(b.due).slice(0, 10) : "9999-12-31";
         if (ad !== bd) return ad.localeCompare(bd);
         return String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""));
       });
@@ -166,59 +156,56 @@ export default function OpsPage() {
       const c = String(it.category || "outro");
       map.set(c, [...(map.get(c) ?? []), it]);
     }
-    // sort by created_at desc
     for (const [k, arr] of map.entries()) {
       map.set(k, arr.slice().sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""))));
     }
     return map;
   }, [items]);
 
-  // ---------- CS computed ----------
-  const today = todayISO();
-  const next30 = addDaysISO(today, 30);
+  const customersSorted = useMemo(() => {
+    return [...customers].sort((a, b) => safeISODate(a.renewal_date).localeCompare(safeISODate(b.renewal_date)));
+  }, [customers]);
 
-  const clientsSorted = useMemo(() => {
-    return [...clients].sort((a, b) => String(a.renewal_date).localeCompare(String(b.renewal_date)));
-  }, [clients]);
+  const expiringNext30 = useMemo(() => {
+    const now = new Date();
+    const end = new Date(now);
+    end.setDate(end.getDate() + 30);
 
-  const expiringSoon = useMemo(() => {
-    return clientsSorted.filter((c) => {
-      const r = isoDate(c.renewal_date);
-      if (!r) return false;
-      return r >= today && r <= next30;
+    return customersSorted.filter((c) => {
+      const d = safeISODate(c.renewal_date);
+      if (!d) return false;
+      const dt = new Date(d + "T00:00:00");
+      return dt >= new Date(now.toISOString().slice(0, 10) + "T00:00:00") && dt <= end;
     });
-  }, [clientsSorted, today, next30]);
+  }, [customersSorted]);
 
-  const totals = useMemo(() => {
-    const total = clients.length;
+  const csStats = useMemo(() => {
+    const total = customers.length;
+    // Como você falou: “renovou” é métrica separada, não tira de ativos.
+    // Aqui fica simples: ativo = total cadastrado
+    const ativos = total;
 
-    const active = clients.filter((c) => isoDate(c.renewal_date) >= today).length;
-    const renewed = clients.filter((c) => !!c.renewed).length;
-    const notRenewed = clients.filter((c) => isoDate(c.renewal_date) < today && !c.renewed).length;
+    // Se você tiver campo booleano/flag no DB, ajuste aqui.
+    // Fallback: usa notes contendo “[renovou]” / “[nao_renovou]” se existir (não é obrigatório).
+    const renovaram = customers.filter((c) => String((c as any).renewed ?? "").toLowerCase() === "true").length;
+    const naoRenovaram = customers.filter((c) => String((c as any).not_renewed ?? "").toLowerCase() === "true").length;
 
-    const pct = (n: number) => (total > 0 ? (n * 100) / total : 0);
-
+    const pct = (n: number) => (total === 0 ? 0 : (n * 100) / total);
     return {
       total,
-      active,
-      renewed,
-      notRenewed,
-      activePct: pct(active),
-      renewedPct: pct(renewed),
-      notRenewedPct: pct(notRenewed),
+      ativos,
+      renovaram,
+      naoRenovaram,
+      pAtivos: pct(ativos),
+      pRenovaram: pct(renovaram),
+      pNaoRenovaram: pct(naoRenovaram),
     };
-  }, [clients, today]);
+  }, [customers]);
 
-  // ---------- Task actions ----------
+  // Tasks actions
   function openAddTask() {
     setEditingTaskId(null);
-    setTaskForm({
-      title: "",
-      description: "",
-      owner: "",
-      due: "",
-      status: "em_andamento",
-    });
+    setTaskForm({ title: "", description: "", owner: "", due: "", status: "em_andamento" });
     setOpenTaskEdit(true);
   }
 
@@ -275,15 +262,10 @@ export default function OpsPage() {
     }
   }
 
-  // ---------- Important items actions ----------
+  // Important items actions
   function openAddItem() {
     setEditingItemId(null);
-    setItemForm({
-      category: "link",
-      title: "",
-      description: "",
-      url: "",
-    });
+    setItemForm({ category: "link", title: "", description: "", url: "" });
     setOpenItemEdit(true);
   }
 
@@ -309,18 +291,9 @@ export default function OpsPage() {
         url: itemForm.url.trim(),
       };
 
-      if (!payload.title) {
-        setErr("Título é obrigatório.");
-        return;
-      }
-      if (!payload.url) {
-        setErr("Link é obrigatório.");
-        return;
-      }
-      if (!isValidUrl(payload.url)) {
-        setErr("Link inválido. Use http:// ou https://");
-        return;
-      }
+      if (!payload.title) return setErr("Título é obrigatório.");
+      if (!payload.url) return setErr("Link é obrigatório.");
+      if (!isValidUrl(payload.url)) return setErr("Link inválido. Use http:// ou https://");
 
       await upsertOpsImportantItem(payload);
       setOpenItemEdit(false);
@@ -341,95 +314,77 @@ export default function OpsPage() {
     }
   }
 
-  // ---------- CS actions ----------
-  function openAddClient() {
-    setEditingClientId(null);
-    setClientForm({
-      entry_date: todayISO(),
+  // CS actions
+  function openAddCustomer() {
+    setEditingCustomerId(null);
+    setCustomerForm({
+      entry_date: "",
       name: "",
       phone: "",
       product: "",
-      amount_paid: 0,
-      renewal_date: addDaysISO(todayISO(), 30),
-      renewed: false,
+      paid_value: 0,
+      renewal_date: "",
+      notes: "",
     });
-    setOpenClientEdit(true);
+    setOpenCustomerEdit(true);
   }
 
-  function openEditClient(c: CSClient) {
-    setEditingClientId(c.id);
-    setClientForm({
-      entry_date: isoDate(c.entry_date) || todayISO(),
+  function openEditCustomer(c: OpsCustomer) {
+    setEditingCustomerId(c.id);
+    setCustomerForm({
+      entry_date: safeISODate(c.entry_date),
       name: c.name ?? "",
       phone: c.phone ?? "",
       product: c.product ?? "",
-      amount_paid: Number(c.amount_paid || 0),
-      renewal_date: isoDate(c.renewal_date) || addDaysISO(todayISO(), 30),
-      renewed: !!c.renewed,
+      paid_value: Number(c.paid_value || 0),
+      renewal_date: safeISODate(c.renewal_date),
+      notes: c.notes ?? "",
     });
-    setOpenClientEdit(true);
+    setOpenCustomerEdit(true);
   }
 
-  async function saveClient() {
+  function openViewCustomer(c: OpsCustomer) {
+    setViewCustomer(c);
+    setOpenCustomerView(true);
+  }
+
+  async function saveCustomer() {
     setErr(null);
     try {
-      const payload: Partial<CSClient> = {
-        id: editingClientId ?? uid(),
-        entry_date: clientForm.entry_date,
-        name: clientForm.name.trim(),
-        phone: clientForm.phone.trim(),
-        product: clientForm.product.trim(),
-        amount_paid: Number(clientForm.amount_paid || 0),
-        renewal_date: clientForm.renewal_date,
-        renewed: !!clientForm.renewed,
-      };
+      const payload: Partial<OpsCustomer> = {
+        id: editingCustomerId ?? uid(),
+        entry_date: customerForm.entry_date || null,
+        name: customerForm.name.trim(),
+        phone: customerForm.phone.trim(),
+        product: customerForm.product.trim(),
+        paid_value: Number(customerForm.paid_value || 0),
+        renewal_date: customerForm.renewal_date || null,
+        notes: customerForm.notes.trim(),
+      } as any;
 
-      if (!payload.name) {
-        setErr("Nome é obrigatório.");
-        return;
-      }
-      if (!payload.phone) {
-        setErr("Telefone é obrigatório.");
-        return;
-      }
-      if (!payload.product) {
-        setErr("Produto ativo é obrigatório.");
-        return;
-      }
-      if (!payload.entry_date) {
-        setErr("Data de entrada é obrigatória.");
-        return;
-      }
-      if (!payload.renewal_date) {
-        setErr("Data de renovação é obrigatória.");
-        return;
-      }
+      if (!payload.name) return setErr("Nome é obrigatório.");
+      if (!payload.renewal_date) return setErr("Data de renovação é obrigatória.");
 
-      await upsertCSClient(payload);
-      setOpenClientEdit(false);
+      await upsertOpsCustomer(payload);
+      setOpenCustomerEdit(false);
       await refresh();
     } catch (e: any) {
       setErr(e?.message ?? "Erro ao salvar cliente.");
     }
   }
 
-  async function removeClient(id: string) {
+  async function removeCustomer(id: string) {
     if (!confirm("Excluir este cliente?")) return;
     setErr(null);
     try {
-      await deleteCSClient(id);
+      await deleteOpsCustomer(id);
       await refresh();
     } catch (e: any) {
       setErr(e?.message ?? "Erro ao excluir cliente.");
     }
   }
 
-  function openClientPopup(c: CSClient) {
-    setViewClient(c);
-    setOpenClientView(true);
-  }
-
-  // ---------- UI helpers ----------
+  // UI pieces
   function TaskCard({ t }: { t: OpsTask }) {
     return (
       <div
@@ -510,61 +465,12 @@ export default function OpsPage() {
     );
   }
 
-  const csColumns = useMemo(
-    () => [
-      { key: "entry_date", header: "Entrada", render: (r: any) => isoDate(r.entry_date) },
-      { key: "name", header: "Nome" },
-      { key: "phone", header: "Telefone" },
-      { key: "product", header: "Produto ativo" },
-      {
-        key: "amount_paid",
-        header: "Valor pago",
-        render: (r: any) =>
-          Number(r.amount_paid || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }),
-      },
-      {
-        key: "renewal_date",
-        header: "Renovação",
-        render: (r: any) => {
-          const d = isoDate(r.renewal_date);
-          const days = diffDays(today, d);
-          const badge =
-            d < today ? "Vencido" : days <= 7 ? "Vence já" : days <= 30 ? "Próx. 30d" : "OK";
-
-          return (
-            <div className="flex flex-wrap items-center gap-2">
-              <span>{d}</span>
-              <Pill>{badge}</Pill>
-            </div>
-          );
-        },
-      },
-      {
-        key: "renewed",
-        header: "Renovou?",
-        render: (r: any) => <Pill>{r.renewed ? "Sim" : "Não"}</Pill>,
-      },
-    ],
-    [today]
-  );
-
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="text-lg font-semibold">Operação</div>
           <div className="text-sm text-slate-400">Kanban, dados internos e Customer Success.</div>
-        </div>
-
-        <div className="flex flex-wrap items-end gap-2">
-          <Button onClick={openAddTask}>Nova tarefa</Button>
-          <Button variant="outline" onClick={openAddItem}>
-            Adicionar item (Dados importantes)
-          </Button>
-          <Button variant="outline" onClick={openAddClient}>
-            Adicionar cliente (CS)
-          </Button>
         </div>
       </div>
 
@@ -572,11 +478,11 @@ export default function OpsPage() {
         <div className="rounded-3xl border border-red-900/50 bg-red-950/30 px-5 py-4 text-sm text-red-200">{err}</div>
       ) : null}
 
-      {/* 1) KANBAN (sem botões mover) */}
+      {/* 1) KANBAN */}
       <Card
         title="Kanban de tarefas"
         subtitle="Clique no card para ver a descrição completa. Use Editar para alterar campos."
-        right={loading ? <Pill>carregando…</Pill> : <Pill>ok</Pill>}
+        right={<Button onClick={openAddTask}>Nova tarefa</Button>}
       >
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
           {STATUS_ORDER.map((s) => (
@@ -600,20 +506,23 @@ export default function OpsPage() {
             </div>
           ))}
         </div>
+
+        {loading ? <div className="mt-3 text-xs text-slate-400">Carregando…</div> : null}
       </Card>
 
-      {/* 2) DADOS IMPORTANTES (somente 1 botão de adicionar, no topo da página) */}
+      {/* 2) DADOS IMPORTANTES */}
       <Card
         title="Dados importantes"
-        subtitle="Central do time: logins/senhas, links úteis, materiais e processos internos. Apenas links (sem anexos)."
+        subtitle="Central do time: logins/senhas, links úteis, materiais e processos internos. Apenas links."
+        right={<Button variant="outline" onClick={openAddItem}>Adicionar item</Button>}
       >
         <div className="space-y-6">
-          {(["login", "link", "material", "processos_internos", "outro"] as ImportantCategory[]).map((k) => {
+          {["login", "link", "material", "procedimento", "outro"].map((k) => {
             const arr = itemsByCategory.get(k) ?? [];
             return (
               <div key={k} className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold">{categoryLabel(k)}</div>
+                  <div className="text-sm font-semibold">{categoryLabel(k as any)}</div>
                   <Pill>{arr.length}</Pill>
                 </div>
 
@@ -634,96 +543,91 @@ export default function OpsPage() {
         </div>
       </Card>
 
-      {/* 4) VENCIMENTOS PRÓXIMOS (card clicável abre popup com dados do cliente) */}
-      <Card
-        title="Vencimentos próximos (30 dias)"
-        subtitle={`Hoje: ${today} • Janela: ${today} → ${next30}`}
-        right={<Pill>{expiringSoon.length}</Pill>}
-      >
-        {expiringSoon.length === 0 ? (
-          <div className="text-sm text-slate-400">Nenhum cliente vencendo nos próximos 30 dias.</div>
-        ) : (
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-            {expiringSoon.map((c) => {
-              const r = isoDate(c.renewal_date);
-              const days = diffDays(today, r);
-              return (
-                <div
-                  key={c.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => openClientPopup(c)}
-                  className="cursor-pointer rounded-3xl border border-slate-800 bg-slate-950/20 p-4 hover:bg-slate-950/30"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="font-semibold truncate">{c.name}</div>
-                      <div className="mt-1 text-xs text-slate-400">
-                        {c.product} • {c.phone}
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 flex-col items-end gap-2">
-                      <Pill>Renova: {r}</Pill>
-                      <Pill>{days <= 7 ? "Vence já" : `Faltam ${days}d`}</Pill>
-                    </div>
-                  </div>
-                  <div className="mt-3 text-sm text-slate-300">
-                    Pago:{" "}
-                    {Number(c.amount_paid || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} • Renovou?{" "}
-                    <b>{c.renewed ? "Sim" : "Não"}</b>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </Card>
-
       {/* 3) CUSTOMER SUCCESS (tabela completa) */}
       <Card
-        title="Customer Success — clientes ativos"
-        subtitle="Lista completa, ordenada por data de vencimento (mais próximo primeiro)."
-        right={<Pill>Total: {clients.length}</Pill>}
+        title="Customer Success"
+        subtitle="Clientes ativos + datas e renovação. Ordenado por vencimento."
+        right={<Button onClick={openAddCustomer}>Adicionar cliente</Button>}
       >
         <Table
-          columns={csColumns as any}
-          rows={clientsSorted}
+          columns={[
+            { key: "entry_date", header: "Entrada", render: (r: any) => safeISODate(r.entry_date) || "—" },
+            { key: "name", header: "Nome" },
+            { key: "phone", header: "Telefone" },
+            { key: "product", header: "Produto ativo" },
+            { key: "paid_value", header: "Valor pago", render: (r: any) => brl(r.paid_value) },
+            { key: "renewal_date", header: "Renovação", render: (r: any) => safeISODate(r.renewal_date) || "—" },
+          ]}
+          rows={customersSorted}
           rowKey={(r: any) => r.id}
           actions={(r: any) => (
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => openEditClient(r)}>
+              <Button variant="outline" onClick={() => openViewCustomer(r)}>
+                Ver
+              </Button>
+              <Button variant="outline" onClick={() => openEditCustomer(r)}>
                 Editar
               </Button>
-              <Button variant="ghost" onClick={() => removeClient(r.id)}>
+              <Button variant="ghost" onClick={() => removeCustomer(r.id)}>
                 Excluir
               </Button>
             </div>
           )}
         />
+
+        {loading ? <div className="mt-3 text-xs text-slate-400">Carregando…</div> : null}
+      </Card>
+
+      {/* 4) VENCIMENTOS PRÓXIMOS */}
+      <Card title="Vencimentos nos próximos 30 dias" subtitle="Clique em um cliente para ver os detalhes.">
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {expiringNext30.map((c) => (
+            <div
+              key={c.id}
+              className="rounded-3xl border border-slate-800 bg-slate-950/20 p-4 hover:bg-slate-950/30 cursor-pointer"
+              onClick={() => openViewCustomer(c)}
+              role="button"
+              tabIndex={0}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-semibold truncate">{c.name}</div>
+                  <div className="mt-1 text-xs text-slate-400">
+                    Renovação: {safeISODate(c.renewal_date) || "—"} • Produto: {c.product || "—"}
+                  </div>
+                </div>
+                <Pill>{brl(c.paid_value)}</Pill>
+              </div>
+            </div>
+          ))}
+
+          {expiringNext30.length === 0 ? (
+            <div className="rounded-3xl border border-slate-800 bg-slate-950/10 px-4 py-6 text-sm text-slate-500">
+              Nenhum vencimento nos próximos 30 dias.
+            </div>
+          ) : null}
+        </div>
       </Card>
 
       {/* 5) CONTADORES */}
-      <Card
-        title="Indicadores de renovação"
-        subtitle="Base: total de clientes cadastrados. Renovou é um marcador separado (não remove o cliente de ativo)."
-      >
+      <Card title="Indicadores (Customer Success)" subtitle="Ativos = total cadastrado. Renovou / Não renovou dependem de flags no DB.">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div className="rounded-3xl border border-slate-800 bg-slate-950/20 p-4">
             <div className="text-xs text-slate-400">Clientes ativos</div>
-            <div className="mt-1 text-2xl font-semibold">{totals.active}</div>
-            <div className="mt-2 text-sm text-slate-300">{totals.activePct.toFixed(1)}%</div>
+            <div className="mt-1 text-2xl font-semibold">{csStats.ativos}</div>
+            <div className="mt-1 text-xs text-slate-400">{csStats.pAtivos.toFixed(1)}% do total</div>
           </div>
 
           <div className="rounded-3xl border border-slate-800 bg-slate-950/20 p-4">
             <div className="text-xs text-slate-400">Clientes que renovaram</div>
-            <div className="mt-1 text-2xl font-semibold">{totals.renewed}</div>
-            <div className="mt-2 text-sm text-slate-300">{totals.renewedPct.toFixed(1)}%</div>
+            <div className="mt-1 text-2xl font-semibold">{csStats.renovaram}</div>
+            <div className="mt-1 text-xs text-slate-400">{csStats.pRenovaram.toFixed(1)}% do total</div>
           </div>
 
           <div className="rounded-3xl border border-slate-800 bg-slate-950/20 p-4">
             <div className="text-xs text-slate-400">Clientes que não renovaram</div>
-            <div className="mt-1 text-2xl font-semibold">{totals.notRenewed}</div>
-            <div className="mt-2 text-sm text-slate-300">{totals.notRenewedPct.toFixed(1)}%</div>
+            <div className="mt-1 text-2xl font-semibold">{csStats.naoRenovaram}</div>
+            <div className="mt-1 text-xs text-slate-400">{csStats.pNaoRenovaram.toFixed(1)}% do total</div>
           </div>
         </div>
       </Card>
@@ -746,9 +650,7 @@ export default function OpsPage() {
 
           <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
             <div className="text-sm font-semibold">Descrição</div>
-            <div className="mt-2 text-sm text-slate-300 whitespace-pre-wrap">
-              {viewTask?.description ? viewTask.description : "Sem descrição."}
-            </div>
+            <div className="mt-2 text-sm text-slate-300 whitespace-pre-wrap">{viewTask?.description || "Sem descrição."}</div>
           </div>
 
           <div className="flex justify-end gap-2">
@@ -797,7 +699,11 @@ export default function OpsPage() {
 
             <div>
               <Label>Prazo</Label>
-              <Input type="date" value={taskForm.due} onChange={(e) => setTaskForm((s) => ({ ...s, due: e.target.value }))} />
+              <Input
+                type="date"
+                value={taskForm.due}
+                onChange={(e) => setTaskForm((s) => ({ ...s, due: e.target.value }))}
+              />
             </div>
 
             <div className="md:col-span-2">
@@ -840,14 +746,11 @@ export default function OpsPage() {
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <div className="md:col-span-2">
               <Label>Categoria</Label>
-              <Select
-                value={itemForm.category}
-                onChange={(e) => setItemForm((s) => ({ ...s, category: e.target.value as ImportantCategory }))}
-              >
+              <Select value={itemForm.category} onChange={(e) => setItemForm((s) => ({ ...s, category: e.target.value as ImportantCategory }))}>
                 <option value="login">Login/Senha</option>
                 <option value="link">Link útil</option>
                 <option value="material">Material</option>
-                <option value="processos_internos">Processos internos</option>
+                <option value="procedimento">Processos internos</option>
                 <option value="outro">Outro</option>
               </Select>
             </div>
@@ -881,116 +784,53 @@ export default function OpsPage() {
         </div>
       </Modal>
 
-      {/* MODAL: ADD/EDIT CLIENT */}
+      {/* MODAL: VIEW CUSTOMER */}
       <Modal
-        open={openClientEdit}
-        title={editingClientId ? "Editar cliente (CS)" : "Adicionar cliente (CS)"}
-        subtitle="Clientes e datas para renovação."
-        onClose={() => setOpenClientEdit(false)}
-      >
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <div>
-              <Label>Data de entrada</Label>
-              <Input
-                type="date"
-                value={clientForm.entry_date}
-                onChange={(e) => setClientForm((s) => ({ ...s, entry_date: e.target.value }))}
-              />
-            </div>
-
-            <div>
-              <Label>Data de renovação</Label>
-              <Input
-                type="date"
-                value={clientForm.renewal_date}
-                onChange={(e) => setClientForm((s) => ({ ...s, renewal_date: e.target.value }))}
-              />
-            </div>
-
-            <div className="md:col-span-2">
-              <Label>Nome</Label>
-              <Input value={clientForm.name} onChange={(e) => setClientForm((s) => ({ ...s, name: e.target.value }))} />
-            </div>
-
-            <div>
-              <Label>Telefone</Label>
-              <Input value={clientForm.phone} onChange={(e) => setClientForm((s) => ({ ...s, phone: e.target.value }))} />
-            </div>
-
-            <div>
-              <Label>Produto ativo</Label>
-              <Input value={clientForm.product} onChange={(e) => setClientForm((s) => ({ ...s, product: e.target.value }))} />
-            </div>
-
-            <div>
-              <Label>Valor pago (R$)</Label>
-              <Input
-                type="number"
-                min={0}
-                step="0.01"
-                value={clientForm.amount_paid}
-                onChange={(e) => setClientForm((s) => ({ ...s, amount_paid: Number(e.target.value || 0) }))}
-              />
-            </div>
-
-            <div className="md:col-span-2">
-              <Label>Renovou?</Label>
-              <Select
-                value={clientForm.renewed ? "sim" : "nao"}
-                onChange={(e) => setClientForm((s) => ({ ...s, renewed: e.target.value === "sim" }))}
-              >
-                <option value="nao">Não</option>
-                <option value="sim">Sim</option>
-              </Select>
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setOpenClientEdit(false)}>
-              Cancelar
-            </Button>
-            <Button onClick={saveClient}>{editingClientId ? "Salvar alterações" : "Salvar cliente"}</Button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* MODAL: VIEW CLIENT (popup do card de vencimentos próximos) */}
-      <Modal
-        open={openClientView}
-        title={viewClient?.name ?? "Cliente"}
-        subtitle={viewClient?.product ? `Produto: ${viewClient.product}` : "—"}
+        open={openCustomerView}
+        title={viewCustomer?.name ?? "Cliente"}
+        subtitle={viewCustomer?.product ? `Produto: ${viewCustomer.product}` : "—"}
         onClose={() => {
-          setOpenClientView(false);
-          setViewClient(null);
+          setOpenCustomerView(false);
+          setViewCustomer(null);
         }}
       >
         <div className="space-y-4">
-          <div className="flex flex-wrap gap-2">
-            <Pill>Entrada: {isoDate(viewClient?.entry_date)}</Pill>
-            <Pill>Renovação: {isoDate(viewClient?.renewal_date)}</Pill>
-            <Pill>Renovou? {viewClient?.renewed ? "Sim" : "Não"}</Pill>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
+              <div className="text-xs text-slate-400">Data de entrada</div>
+              <div className="mt-1 font-semibold">{safeISODate(viewCustomer?.entry_date) || "—"}</div>
+            </div>
+
+            <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
+              <div className="text-xs text-slate-400">Telefone</div>
+              <div className="mt-1 font-semibold">{viewCustomer?.phone || "—"}</div>
+            </div>
+
+            <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
+              <div className="text-xs text-slate-400">Valor pago</div>
+              <div className="mt-1 font-semibold">{brl(viewCustomer?.paid_value)}</div>
+            </div>
+
+            <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
+              <div className="text-xs text-slate-400">Data de renovação</div>
+              <div className="mt-1 font-semibold">{safeISODate(viewCustomer?.renewal_date) || "—"}</div>
+            </div>
           </div>
 
-          <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4 space-y-2">
-            <div className="text-sm">
-              <span className="text-slate-400">Telefone:</span> <span className="font-semibold">{viewClient?.phone ?? "—"}</span>
+          {viewCustomer?.notes ? (
+            <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
+              <div className="text-sm font-semibold">Observações</div>
+              <div className="mt-2 text-sm text-slate-300 whitespace-pre-wrap">{viewCustomer.notes}</div>
             </div>
-            <div className="text-sm">
-              <span className="text-slate-400">Valor pago:</span>{" "}
-              <span className="font-semibold">
-                {Number(viewClient?.amount_paid || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-              </span>
-            </div>
-          </div>
+          ) : null}
 
           <div className="flex justify-end gap-2">
             <Button
               variant="outline"
               onClick={() => {
-                if (!viewClient) return;
-                setOpenClientView(false);
-                openEditClient(viewClient);
+                if (!viewCustomer) return;
+                setOpenCustomerView(false);
+                openEditCustomer(viewCustomer);
               }}
             >
               Editar
@@ -998,13 +838,81 @@ export default function OpsPage() {
             <Button
               variant="ghost"
               onClick={() => {
-                if (!viewClient) return;
-                setOpenClientView(false);
-                removeClient(viewClient.id);
+                if (!viewCustomer) return;
+                setOpenCustomerView(false);
+                removeCustomer(viewCustomer.id);
               }}
             >
               Excluir
             </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* MODAL: ADD/EDIT CUSTOMER */}
+      <Modal
+        open={openCustomerEdit}
+        title={editingCustomerId ? "Editar cliente (CS)" : "Adicionar cliente (CS)"}
+        subtitle="Campos usados no acompanhamento de renovação."
+        onClose={() => setOpenCustomerEdit(false)}
+      >
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <Label>Data de entrada</Label>
+              <Input
+                type="date"
+                value={customerForm.entry_date}
+                onChange={(e) => setCustomerForm((s) => ({ ...s, entry_date: e.target.value }))}
+              />
+            </div>
+
+            <div>
+              <Label>Data de renovação</Label>
+              <Input
+                type="date"
+                value={customerForm.renewal_date}
+                onChange={(e) => setCustomerForm((s) => ({ ...s, renewal_date: e.target.value }))}
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <Label>Nome</Label>
+              <Input value={customerForm.name} onChange={(e) => setCustomerForm((s) => ({ ...s, name: e.target.value }))} />
+            </div>
+
+            <div>
+              <Label>Telefone</Label>
+              <Input value={customerForm.phone} onChange={(e) => setCustomerForm((s) => ({ ...s, phone: e.target.value }))} />
+            </div>
+
+            <div>
+              <Label>Produto ativo</Label>
+              <Input value={customerForm.product} onChange={(e) => setCustomerForm((s) => ({ ...s, product: e.target.value }))} />
+            </div>
+
+            <div>
+              <Label>Valor pago (R$)</Label>
+              <Input
+                type="number"
+                step="0.01"
+                min={0}
+                value={customerForm.paid_value}
+                onChange={(e) => setCustomerForm((s) => ({ ...s, paid_value: Number(e.target.value || 0) }))}
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <Label>Observações</Label>
+              <Input value={customerForm.notes} onChange={(e) => setCustomerForm((s) => ({ ...s, notes: e.target.value }))} />
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setOpenCustomerEdit(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={saveCustomer}>{editingCustomerId ? "Salvar alterações" : "Salvar cliente"}</Button>
           </div>
         </div>
       </Modal>
