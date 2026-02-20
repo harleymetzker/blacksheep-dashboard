@@ -1,3 +1,4 @@
+// src/lib/db.ts
 import { supabase } from "./supabase";
 import { Profile } from "./utils";
 
@@ -83,25 +84,43 @@ export type BankBalanceEntry = {
 export type OpsImportantItem = {
   id: string;
   created_at?: string;
-  category: "login" | "link" | "material" | "processos_internos" | "outro";
+  category: "login" | "link" | "material" | "procedimento" | "outro";
   title: string;
-  description: string;
+  description: string | null;
   url: string;
 };
 
-export type CSClient = {
+/**
+ * Customer Success dentro da Operação
+ * Colunas esperadas em ops_customers:
+ * - id uuid (pk)
+ * - entry_date date
+ * - name text
+ * - phone text
+ * - product text
+ * - paid_value numeric
+ * - renewal_date date
+ * - notes text (nullable)
+ * - created_at timestamp
+ *
+ * Campos opcionais abaixo só se você quiser adicionar no futuro (não quebra o upsert via Partial).
+ */
+export type OpsCustomer = {
   id: string;
   created_at?: string;
-  entry_date: string;      // yyyy-mm-dd
+
+  entry_date: string; // YYYY-MM-DD
   name: string;
   phone: string;
   product: string;
-  amount_paid: number;
-  renewal_date: string;    // yyyy-mm-dd
-  renewed: boolean;        // marcador separado
-};
+  paid_value: number;
+  renewal_date: string; // YYYY-MM-DD
+  notes?: string | null;
 
-/* ---------------- Guard ---------------- */
+  // opcionais (se existirem na tabela)
+  last_renewal_date?: string | null;
+  churn_date?: string | null;
+};
 
 function mustConfigured() {
   if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
@@ -228,6 +247,7 @@ export async function deleteFinance(id: string) {
 export async function listBankBalances() {
   mustConfigured();
   const { data, error } = await supabase.from("bank_balances").select("*").order("day", { ascending: false });
+
   if (error) throw error;
   return (data ?? []) as BankBalanceEntry[];
 }
@@ -287,28 +307,28 @@ export async function deleteOpsImportantItem(id: string) {
   if (error) throw error;
 }
 
-/* ---------------- Customer Success Clients ---------------- */
+/* ---------------- Ops Customers (CS) ---------------- */
 
-export async function listCSClients() {
+export async function listOpsCustomers() {
   mustConfigured();
   const { data, error } = await supabase
-    .from("cs_clients")
+    .from("ops_customers")
     .select("*")
     .order("renewal_date", { ascending: true });
 
   if (error) throw error;
-  return (data ?? []) as CSClient[];
+  return (data ?? []) as OpsCustomer[];
 }
 
-export async function upsertCSClient(row: Partial<CSClient>) {
+export async function upsertOpsCustomer(row: Partial<OpsCustomer>) {
   mustConfigured();
-  const { data, error } = await supabase.from("cs_clients").upsert(row).select("*").single();
+  const { data, error } = await supabase.from("ops_customers").upsert(row).select("*").single();
   if (error) throw error;
-  return data as CSClient;
+  return data as OpsCustomer;
 }
 
-export async function deleteCSClient(id: string) {
+export async function deleteOpsCustomer(id: string) {
   mustConfigured();
-  const { error } = await supabase.from("cs_clients").delete().eq("id", id);
+  const { error } = await supabase.from("ops_customers").delete().eq("id", id);
   if (error) throw error;
 }
