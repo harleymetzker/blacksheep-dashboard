@@ -1,4 +1,5 @@
 import { NavLink, Route, Routes } from "react-router-dom";
+import MetaGlobalPage from "./pages/MetaGlobalPage";
 import OverviewPage from "./pages/OverviewPage";
 import LeadsPage from "./pages/LeadsPage";
 import SalesPage from "./pages/SalesPage";
@@ -35,6 +36,7 @@ export default function App() {
           </div>
 
           <nav className="flex gap-2">
+            <NavItem to="/meta">Meta Global</NavItem>
             <NavItem to="/">Visão geral</NavItem>
             <NavItem to="/leads">Leads</NavItem>
             <NavItem to="/sales">Vendas</NavItem>
@@ -46,6 +48,7 @@ export default function App() {
 
       <main className="mx-auto max-w-7xl px-6 py-8">
         <Routes>
+          <Route path="/meta" element={<MetaGlobalPage />} />
           <Route path="/" element={<OverviewPage />} />
           <Route path="/leads" element={<LeadsPage />} />
           <Route path="/sales" element={<SalesPage />} />
