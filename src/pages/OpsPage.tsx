@@ -506,7 +506,7 @@ export default function OpsPage() {
 
     // 1) grava a renovação (histórico)
     const renewalPayload: Partial<OpsCustomerRenewal> = {
-      id: uid(),
+      id: uuid(),
       customer_id: renewalCustomer.id,
       renewal_date: renewalForm.renewal_date || todayISO(),
       paid_value: renewalForm.paid_value ? safeNum(renewalForm.paid_value) : null,
