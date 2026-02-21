@@ -1,13 +1,12 @@
-// src/pages/MetaGlobalPage.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { Card, Stat, Pill } from "../components/ui";
 import { brl, safeDiv, todayISO } from "../lib/utils";
 import {
+  listDailyFunnel,
   listMeetingLeads,
   listMetaAds,
   listOpsCustomers,
   listOpsCustomerRenewals,
-  listDailyFunnel,
 } from "../lib/db";
 import { Profile } from "../lib/utils";
 
@@ -59,32 +58,19 @@ function endOfMonthISO(year: number, month: number) {
   return d.toISOString().slice(0, 10);
 }
 
-function daysInYear(year: number) {
-  const a = new Date(year, 0, 1);
-  const b = new Date(year + 1, 0, 1);
-  return Math.round((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
-}
-
-function dayOfYear(iso: string) {
-  const d = new Date(iso + "T00:00:00");
-  const y = d.getFullYear();
-  const start = new Date(y, 0, 1);
-  return Math.floor((d.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1; // 1..365/366
+function daysBetweenInclusive(startISO: string, endISO: string) {
+  const a = new Date(startISO + "T00:00:00");
+  const b = new Date(endISO + "T00:00:00");
+  const ms = b.getTime() - a.getTime();
+  const days = Math.floor(ms / (1000 * 60 * 60 * 24)) + 1;
+  return Math.max(days, 1);
 }
 
 function deltaPct(real: number, target: number) {
   return safeDiv((real - target) * 100, target);
 }
-function DeltaPill({
-  real,
-  target,
-  disabled,
-}: {
-  real: number;
-  target: number;
-  disabled?: boolean;
-}) {
-  if (disabled || !Number.isFinite(target) || target === 0) return <Pill>—</Pill>;
+function deltaPill(real: number, target: number) {
+  if (!Number.isFinite(target) || target <= 0) return <Pill>—</Pill>;
   const d = deltaPct(real, target);
   const sign = d >= 0 ? "+" : "";
   return <Pill>{`${sign}${d.toFixed(1)}%`}</Pill>;
@@ -95,11 +81,10 @@ function sum(nums: number[]) {
 }
 
 // Barra simples
-function ProgressBar({ valuePct, label }: { valuePct: number; label?: string }) {
+function ProgressBar({ valuePct }: { valuePct: number }) {
   const v = clampPct(valuePct);
   return (
     <div className="w-full">
-      {label ? <div className="mb-2 text-xs text-slate-400">{label}</div> : null}
       <div className="h-3 w-full rounded-full border border-slate-800 bg-slate-950/30 overflow-hidden">
         <div className="h-3 bg-slate-200/70" style={{ width: `${v}%` }} />
       </div>
@@ -111,105 +96,17 @@ function ProgressBar({ valuePct, label }: { valuePct: number; label?: string }) 
   );
 }
 
-// status helpers (aceita legado + novo)
-function isSaleStatus(s: any) {
-  return String(s) === "venda";
+// status helpers (suporta legado pra não “quebrar” base antiga)
+function isNoShow(status: string) {
+  return status === "no_show" || status === "no-show" || status === "noShow";
 }
-function isNoShowStatus(s: any) {
-  return String(s) === "no_show";
+function isSale(status: string) {
+  return status === "venda";
 }
-function isRealizedStatus(s: any) {
-  const v = String(s);
-  return v === "realizou" || v === "reuniao_realizada";
-}
-// reunião realizada (para show-rate) inclui venda
-function isShowStatus(s: any) {
-  return isRealizedStatus(s) || isSaleStatus(s);
-}
-
-function MetricSmallCard(props: {
-  title: string;
-  value: React.ReactNode;
-  metaLine?: React.ReactNode;
-  delta?: React.ReactNode;
-  rightTag?: React.ReactNode;
-}) {
-  const { title, value, metaLine, delta, rightTag } = props;
-  return (
-    <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="text-xs text-slate-400">{title}</div>
-        {rightTag ? rightTag : null}
-      </div>
-      <div className="mt-1 text-2xl font-semibold">{value}</div>
-      <div className="mt-2 text-xs text-slate-400">{metaLine ?? <span>&nbsp;</span>}</div>
-      <div className="mt-2">{delta ?? <Pill>—</Pill>}</div>
-    </div>
-  );
-}
-
-function MetricBigCard(props: {
-  title: string;
-  tag: string; // "Mês" | "YTD"
-  subtitle?: string;
-  leftLabel: string;
-  leftValue: React.ReactNode;
-  leftMeta?: React.ReactNode;
-  leftDelta?: React.ReactNode;
-  rightLabel: string;
-  rightValue: React.ReactNode;
-  rightMeta?: React.ReactNode;
-  rightDelta?: React.ReactNode;
-  progressLabel: string;
-  progressPct: number;
-}) {
-  const {
-    title,
-    tag,
-    subtitle,
-    leftLabel,
-    leftValue,
-    leftMeta,
-    leftDelta,
-    rightLabel,
-    rightValue,
-    rightMeta,
-    rightDelta,
-    progressLabel,
-    progressPct,
-  } = props;
-
-  return (
-    <div className="rounded-3xl border border-slate-800 bg-slate-950/20 p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-base font-semibold">{title}</div>
-          {subtitle ? <div className="mt-1 text-sm text-slate-400">{subtitle}</div> : null}
-        </div>
-        <Pill>{tag}</Pill>
-      </div>
-
-      <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-        <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-4 py-4">
-          <div className="text-xs text-slate-400">{leftLabel}</div>
-          <div className="mt-1 text-2xl font-semibold">{leftValue}</div>
-          <div className="mt-2 text-xs text-slate-400">{leftMeta ?? <span>&nbsp;</span>}</div>
-          <div className="mt-2">{leftDelta ?? <Pill>—</Pill>}</div>
-        </div>
-
-        <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-4 py-4">
-          <div className="text-xs text-slate-400">{rightLabel}</div>
-          <div className="mt-1 text-2xl font-semibold">{rightValue}</div>
-          <div className="mt-2 text-xs text-slate-400">{rightMeta ?? <span>&nbsp;</span>}</div>
-          <div className="mt-2">{rightDelta ?? <Pill>—</Pill>}</div>
-        </div>
-      </div>
-
-      <div className="mt-4">
-        <ProgressBar valuePct={progressPct} label={progressLabel} />
-      </div>
-    </div>
-  );
+function isRealized(status: string) {
+  // novo: "reuniao_realizada" (se existir), legado: "realizou"
+  // regra: venda conta como realizada também
+  return status === "reuniao_realizada" || status === "realizou" || status === "realizada" || status === "venda";
 }
 
 export default function MetaGlobalPage() {
@@ -219,16 +116,16 @@ export default function MetaGlobalPage() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  const [metaMonthRows, setMetaMonthRows] = useState<any[]>([]);
+  const [metaYtdRows, setMetaYtdRows] = useState<any[]>([]);
+  const [dailyHarleyMonth, setDailyHarleyMonth] = useState<any[]>([]);
+  const [dailyGioMonth, setDailyGioMonth] = useState<any[]>([]);
+  const [dailyHarleyYtd, setDailyHarleyYtd] = useState<any[]>([]);
+  const [dailyGioYtd, setDailyGioYtd] = useState<any[]>([]);
   const [leadsHarleyAll, setLeadsHarleyAll] = useState<any[]>([]);
   const [leadsGioAll, setLeadsGioAll] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [renewals, setRenewals] = useState<any[]>([]);
-
-  const [metaMonthRows, setMetaMonthRows] = useState<any[]>([]);
-  const [metaYearRows, setMetaYearRows] = useState<any[]>([]);
-
-  const [dailyHarleyYear, setDailyHarleyYear] = useState<any[]>([]);
-  const [dailyGioYear, setDailyGioYear] = useState<any[]>([]);
 
   const monthStart = useMemo(() => startOfMonthISO(year, month), [year, month]);
   const monthEnd = useMemo(() => endOfMonthISO(year, month), [year, month]);
@@ -236,6 +133,7 @@ export default function MetaGlobalPage() {
   const yearStart = `${year}-01-01`;
   const yearEnd = `${year}-12-31`;
 
+  // YTD “até hoje” (se ano atual); se não, fecha no fim do ano
   const ytdEnd = useMemo(() => {
     const t = todayISO();
     if (t < yearStart) return yearStart;
@@ -243,38 +141,58 @@ export default function MetaGlobalPage() {
     return t;
   }, [yearStart, yearEnd]);
 
-  const ytdDays = useMemo(() => {
-    const total = daysInYear(year);
-    const elapsed = dayOfYear(ytdEnd);
-    return { elapsed, total, frac: safeDiv(elapsed, total) };
-  }, [year, ytdEnd]);
+  // fração do ano decorrido (pra metas proporcionais)
+  const ytdFrac = useMemo(() => {
+    const total = daysBetweenInclusive(yearStart, yearEnd);
+    const done = daysBetweenInclusive(yearStart, ytdEnd);
+    return safeDiv(done, total);
+  }, [yearStart, yearEnd, ytdEnd]);
 
   async function refresh() {
     setLoading(true);
     setErr(null);
 
     try {
+      // Busca ampla de leads (por created_at) e filtra por lead_date/deal_date aqui no front
       const queryEnd = yearEnd >= todayISO() ? yearEnd : todayISO();
 
-      const [mhAll, mgAll, cs, rn, metaM, metaY, dhY, dgY] = await Promise.all([
+      const [
+        metaMonth,
+        metaYtd,
+        dhMonth,
+        dgMonth,
+        dhYtd,
+        dgYtd,
+        mhAll,
+        mgAll,
+        cs,
+        rn,
+      ] = await Promise.all([
+        listMetaAds(monthStart, monthEnd),
+        listMetaAds(yearStart, ytdEnd),
+
+        listDailyFunnel("harley", monthStart, monthEnd),
+        listDailyFunnel("giovanni", monthStart, monthEnd),
+        listDailyFunnel("harley", yearStart, ytdEnd),
+        listDailyFunnel("giovanni", yearStart, ytdEnd),
+
         listMeetingLeads("harley", "2000-01-01", queryEnd),
         listMeetingLeads("giovanni", "2000-01-01", queryEnd),
+
         listOpsCustomers(),
         listOpsCustomerRenewals(),
-        listMetaAds(monthStart, monthEnd),
-        listMetaAds(yearStart, yearEnd),
-        listDailyFunnel("harley", yearStart, yearEnd),
-        listDailyFunnel("giovanni", yearStart, yearEnd),
       ]);
 
+      setMetaMonthRows(metaMonth ?? []);
+      setMetaYtdRows(metaYtd ?? []);
+      setDailyHarleyMonth(dhMonth ?? []);
+      setDailyGioMonth(dgMonth ?? []);
+      setDailyHarleyYtd(dhYtd ?? []);
+      setDailyGioYtd(dgYtd ?? []);
       setLeadsHarleyAll(mhAll ?? []);
       setLeadsGioAll(mgAll ?? []);
       setCustomers(cs ?? []);
       setRenewals(rn ?? []);
-      setMetaMonthRows(metaM ?? []);
-      setMetaYearRows(metaY ?? []);
-      setDailyHarleyYear(dhY ?? []);
-      setDailyGioYear(dgY ?? []);
     } catch (e: any) {
       setErr(e?.message ?? "Erro ao carregar dados.");
     } finally {
@@ -285,22 +203,30 @@ export default function MetaGlobalPage() {
   useEffect(() => {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monthStart, monthEnd]);
+  }, [monthStart, monthEnd, ytdEnd]);
 
-  // ---------------- SALES (deal_date) ----------------
+  // ---------- SALES (por deal_date) ----------
   const salesByProfileMonth = useMemo(() => {
-    const pick = (rows: any[]) =>
-      (rows ?? []).filter((r: any) => isSaleStatus(r.status) && inRange(dealDate(r), monthStart, monthEnd));
+    const pick = (rows: any[], p: Profile) =>
+      (rows ?? []).filter((r: any) => {
+        if (!isSale(String(r.status))) return false;
+        const d = dealDate(r);
+        return inRange(d, monthStart, monthEnd);
+      });
 
     return {
-      harley: pick(leadsHarleyAll),
-      giovanni: pick(leadsGioAll),
+      harley: pick(leadsHarleyAll, "harley"),
+      giovanni: pick(leadsGioAll, "giovanni"),
     } as Record<Profile, any[]>;
   }, [leadsHarleyAll, leadsGioAll, monthStart, monthEnd]);
 
-  const salesByProfileYTD = useMemo(() => {
+  const salesByProfileYtd = useMemo(() => {
     const pick = (rows: any[]) =>
-      (rows ?? []).filter((r: any) => isSaleStatus(r.status) && inRange(dealDate(r), yearStart, ytdEnd));
+      (rows ?? []).filter((r: any) => {
+        if (!isSale(String(r.status))) return false;
+        const d = dealDate(r);
+        return inRange(d, yearStart, ytdEnd);
+      });
 
     return {
       harley: pick(leadsHarleyAll),
@@ -312,102 +238,103 @@ export default function MetaGlobalPage() {
     () => salesByProfileMonth.harley.length + salesByProfileMonth.giovanni.length,
     [salesByProfileMonth]
   );
+  const ytdSalesQty = useMemo(
+    () => salesByProfileYtd.harley.length + salesByProfileYtd.giovanni.length,
+    [salesByProfileYtd]
+  );
 
   const monthSalesValue = useMemo(() => {
     const all = [...salesByProfileMonth.harley, ...salesByProfileMonth.giovanni];
     return all.reduce((acc, r) => acc + dealValue(r), 0);
   }, [salesByProfileMonth]);
 
-  const ytdSalesQty = useMemo(
-    () => salesByProfileYTD.harley.length + salesByProfileYTD.giovanni.length,
-    [salesByProfileYTD]
-  );
-
   const ytdSalesValue = useMemo(() => {
-    const all = [...salesByProfileYTD.harley, ...salesByProfileYTD.giovanni];
+    const all = [...salesByProfileYtd.harley, ...salesByProfileYtd.giovanni];
     return all.reduce((acc, r) => acc + dealValue(r), 0);
-  }, [salesByProfileYTD]);
+  }, [salesByProfileYtd]);
 
-  // 1 venda = 1 empresa
-  const companiesYTD = useMemo(() => ytdSalesQty, [ytdSalesQty]);
+  // ---------- EMPRESAS (definição: 1 venda = 1 empresa) ----------
+  const companiesYTD = ytdSalesQty;
 
-  // ---------------- DAILY FUNNEL (source of meetings booked/realized) ----------------
-  // “Reuniões marcadas” = soma daily_funnel.reuniao (ambos perfis)
-  // “Reuniões realizadas” = soma daily_funnel.proposta (ambos perfis)
-  const dailyAllYear = useMemo(() => [...(dailyHarleyYear ?? []), ...(dailyGioYear ?? [])], [dailyHarleyYear, dailyGioYear]);
-
+  // ---------- MEETINGS BOOKED (fonte: daily_funnel.reuniao) ----------
   const meetingsBookedMonth = useMemo(() => {
-    return dailyAllYear
-      .filter((r: any) => inRange(iso10(r.day), monthStart, monthEnd))
-      .reduce((acc: number, r: any) => acc + Number(r.reuniao || 0), 0);
-  }, [dailyAllYear, monthStart, monthEnd]);
-
-  const meetingsRealizedMonth = useMemo(() => {
-    return dailyAllYear
-      .filter((r: any) => inRange(iso10(r.day), monthStart, monthEnd))
-      .reduce((acc: number, r: any) => acc + Number(r.proposta || 0), 0);
-  }, [dailyAllYear, monthStart, monthEnd]);
+    const h = sum((dailyHarleyMonth ?? []).map((r: any) => Number(r.reuniao || 0)));
+    const g = sum((dailyGioMonth ?? []).map((r: any) => Number(r.reuniao || 0)));
+    return h + g;
+  }, [dailyHarleyMonth, dailyGioMonth]);
 
   const meetingsBookedYTD = useMemo(() => {
-    return dailyAllYear
-      .filter((r: any) => inRange(iso10(r.day), yearStart, ytdEnd))
-      .reduce((acc: number, r: any) => acc + Number(r.reuniao || 0), 0);
-  }, [dailyAllYear, yearStart, ytdEnd]);
+    const h = sum((dailyHarleyYtd ?? []).map((r: any) => Number(r.reuniao || 0)));
+    const g = sum((dailyGioYtd ?? []).map((r: any) => Number(r.reuniao || 0)));
+    return h + g;
+  }, [dailyHarleyYtd, dailyGioYtd]);
 
-  const meetingsRealizedYTD = useMemo(() => {
-    return dailyAllYear
-      .filter((r: any) => inRange(iso10(r.day), yearStart, ytdEnd))
-      .reduce((acc: number, r: any) => acc + Number(r.proposta || 0), 0);
-  }, [dailyAllYear, yearStart, ytdEnd]);
-
-  // ---------------- SHOW-RATE (by meeting_leads statuses) ----------------
-  // show-rate = (realizou + venda) / (realizou + venda + no_show)
-  const showRateMonthPct = useMemo(() => {
-    const all = [...(leadsHarleyAll ?? []), ...(leadsGioAll ?? [])].filter((r: any) =>
-      inRange(leadDateFallback(r), monthStart, monthEnd)
-    );
-
-    const show = all.filter((r: any) => isShowStatus(r.status)).length;
-    const noShow = all.filter((r: any) => isNoShowStatus(r.status)).length;
-    const denom = show + noShow;
-
-    return denom > 0 ? safeDiv(show * 100, denom) : NaN;
+  // ---------- MEETINGS REALIZED / SHOW-RATE (fonte: meeting_leads.status) ----------
+  // regra: venda conta como realizada
+  const leadsInMonth = useMemo(() => {
+    const all = [...(leadsHarleyAll ?? []), ...(leadsGioAll ?? [])];
+    return all.filter((r: any) => inRange(leadDateFallback(r), monthStart, monthEnd));
   }, [leadsHarleyAll, leadsGioAll, monthStart, monthEnd]);
 
-  const showRateYTDPct = useMemo(() => {
-    const all = [...(leadsHarleyAll ?? []), ...(leadsGioAll ?? [])].filter((r: any) =>
-      inRange(leadDateFallback(r), yearStart, ytdEnd)
-    );
-
-    const show = all.filter((r: any) => isShowStatus(r.status)).length;
-    const noShow = all.filter((r: any) => isNoShowStatus(r.status)).length;
-    const denom = show + noShow;
-
-    return denom > 0 ? safeDiv(show * 100, denom) : NaN;
+  const leadsInYtd = useMemo(() => {
+    const all = [...(leadsHarleyAll ?? []), ...(leadsGioAll ?? [])];
+    return all.filter((r: any) => inRange(leadDateFallback(r), yearStart, ytdEnd));
   }, [leadsHarleyAll, leadsGioAll, yearStart, ytdEnd]);
 
-  // ---------------- RENEWALS ----------------
-  function renewalsPctForRange(start: string, end: string) {
-    const dueCustomers = (customers ?? []).filter((c: any) => inRange(iso10(c.renewal_date), start, end));
+  const meetingsRealizedMonth = useMemo(() => {
+    return leadsInMonth.filter((r: any) => isRealized(String(r.status))).length;
+  }, [leadsInMonth]);
+
+  const meetingsRealizedYTD = useMemo(() => {
+    return leadsInYtd.filter((r: any) => isRealized(String(r.status))).length;
+  }, [leadsInYtd]);
+
+  const showRateMonthPct = useMemo(() => {
+    const realized = leadsInMonth.filter((r: any) => isRealized(String(r.status))).length;
+    const noShow = leadsInMonth.filter((r: any) => isNoShow(String(r.status))).length;
+    const denom = realized + noShow;
+    return denom > 0 ? safeDiv(realized * 100, denom) : 0;
+  }, [leadsInMonth]);
+
+  const showRateYtdPct = useMemo(() => {
+    const realized = leadsInYtd.filter((r: any) => isRealized(String(r.status))).length;
+    const noShow = leadsInYtd.filter((r: any) => isNoShow(String(r.status))).length;
+    const denom = realized + noShow;
+    return denom > 0 ? safeDiv(realized * 100, denom) : 0;
+  }, [leadsInYtd]);
+
+  // ---------- RENEWALS (month / YTD) ----------
+  const renewalsMonthPct = useMemo(() => {
+    const dueCustomers = (customers ?? []).filter((c: any) => inRange(iso10(c.renewal_date), monthStart, monthEnd));
     const dueIds = new Set(dueCustomers.map((c: any) => String(c.id)));
 
     const renewedIds = new Set<string>();
     for (const r of renewals ?? []) {
       const payDate = iso10((r as any).renewal_date);
-      if (!inRange(payDate, start, end)) continue;
-
+      if (!inRange(payDate, monthStart, monthEnd)) continue;
       const cid = String((r as any).customer_id ?? "");
       if (cid && dueIds.has(cid)) renewedIds.add(cid);
     }
 
-    if (dueIds.size === 0) return { pct: NaN, base: 0, renewed: 0 };
-    return { pct: safeDiv(renewedIds.size * 100, dueIds.size), base: dueIds.size, renewed: renewedIds.size };
-  }
+    return dueIds.size > 0 ? safeDiv(renewedIds.size * 100, dueIds.size) : 0;
+  }, [customers, renewals, monthStart, monthEnd]);
 
-  const renewalsMonth = useMemo(() => renewalsPctForRange(monthStart, monthEnd), [customers, renewals, monthStart, monthEnd]);
-  const renewalsYTD = useMemo(() => renewalsPctForRange(yearStart, ytdEnd), [customers, renewals, yearStart, ytdEnd]);
+  const renewalsYtdPct = useMemo(() => {
+    const dueCustomers = (customers ?? []).filter((c: any) => inRange(iso10(c.renewal_date), yearStart, ytdEnd));
+    const dueIds = new Set(dueCustomers.map((c: any) => String(c.id)));
 
-  // ---------------- ADS SPEND ----------------
+    const renewedIds = new Set<string>();
+    for (const r of renewals ?? []) {
+      const payDate = iso10((r as any).renewal_date);
+      if (!inRange(payDate, yearStart, ytdEnd)) continue;
+      const cid = String((r as any).customer_id ?? "");
+      if (cid && dueIds.has(cid)) renewedIds.add(cid);
+    }
+
+    return dueIds.size > 0 ? safeDiv(renewedIds.size * 100, dueIds.size) : 0;
+  }, [customers, renewals, yearStart, ytdEnd]);
+
+  // ---------- ADS SPEND (month / YTD) ----------
   const spendByProfileMonth = useMemo(() => {
     const out: Record<Profile, number> = { harley: 0, giovanni: 0 };
     for (const r of metaMonthRows ?? []) {
@@ -419,66 +346,65 @@ export default function MetaGlobalPage() {
 
   const spendByProfileYTD = useMemo(() => {
     const out: Record<Profile, number> = { harley: 0, giovanni: 0 };
-    for (const r of metaYearRows ?? []) {
-      // meta_ads_entries tem start/end; aqui a lista veio do ano inteiro.
-      // se quiser refinar por data depois, filtramos por start_date/end_date no DB. por ora, ok.
+    for (const r of metaYtdRows ?? []) {
       const p = (r.profile as Profile) || "harley";
       out[p] += Number(r.spend || 0);
     }
     return out;
-  }, [metaYearRows]);
+  }, [metaYtdRows]);
+
+  const costPerSaleMonthTotal = useMemo(() => {
+    const spendTotal = spendByProfileMonth.harley + spendByProfileMonth.giovanni;
+    return monthSalesQty > 0 ? safeDiv(spendTotal, monthSalesQty) : 0;
+  }, [spendByProfileMonth, monthSalesQty]);
+
+  const costPerSaleYtdTotal = useMemo(() => {
+    const spendTotal = spendByProfileYTD.harley + spendByProfileYTD.giovanni;
+    return ytdSalesQty > 0 ? safeDiv(spendTotal, ytdSalesQty) : 0;
+  }, [spendByProfileYTD, ytdSalesQty]);
 
   const costPerSaleMonthHarley = useMemo(() => {
     const spend = spendByProfileMonth.harley;
     const sales = salesByProfileMonth.harley.length;
-    return sales > 0 ? safeDiv(spend, sales) : NaN;
+    return sales > 0 ? safeDiv(spend, sales) : 0;
   }, [spendByProfileMonth, salesByProfileMonth]);
 
   const costPerSaleMonthGio = useMemo(() => {
     const spend = spendByProfileMonth.giovanni;
     const sales = salesByProfileMonth.giovanni.length;
-    return sales > 0 ? safeDiv(spend, sales) : NaN;
+    return sales > 0 ? safeDiv(spend, sales) : 0;
   }, [spendByProfileMonth, salesByProfileMonth]);
 
-  const costPerSaleYTDTot = useMemo(() => {
-    const spendTot = spendByProfileYTD.harley + spendByProfileYTD.giovanni;
-    return ytdSalesQty > 0 ? safeDiv(spendTot, ytdSalesQty) : NaN;
-  }, [spendByProfileYTD, ytdSalesQty]);
-
-  const costPerSaleYTDHarley = useMemo(() => {
+  const costPerSaleYtdHarley = useMemo(() => {
     const spend = spendByProfileYTD.harley;
-    const sales = salesByProfileYTD.harley.length;
-    return sales > 0 ? safeDiv(spend, sales) : NaN;
-  }, [spendByProfileYTD, salesByProfileYTD]);
+    const sales = salesByProfileYtd.harley.length;
+    return sales > 0 ? safeDiv(spend, sales) : 0;
+  }, [spendByProfileYTD, salesByProfileYtd]);
 
-  const costPerSaleYTDGio = useMemo(() => {
+  const costPerSaleYtdGio = useMemo(() => {
     const spend = spendByProfileYTD.giovanni;
-    const sales = salesByProfileYTD.giovanni.length;
-    return sales > 0 ? safeDiv(spend, sales) : NaN;
-  }, [spendByProfileYTD, salesByProfileYTD]);
+    const sales = salesByProfileYtd.giovanni.length;
+    return sales > 0 ? safeDiv(spend, sales) : 0;
+  }, [spendByProfileYTD, salesByProfileYtd]);
 
-  const costPerSaleMonthTot = useMemo(() => {
-    const spendTot = spendByProfileMonth.harley + spendByProfileMonth.giovanni;
-    return monthSalesQty > 0 ? safeDiv(spendTot, monthSalesQty) : NaN;
-  }, [spendByProfileMonth, monthSalesQty]);
-
-  // ---------------- GOALS ----------------
-  const monthGoalSales = useMemo(() => GOALS_2026.companiesAnnual / 12, []);
+  // ---------- GOALS ----------
   const monthGoalRevenue = useMemo(() => GOALS_2026.revenueAnnual / 12, []);
-
+  const monthGoalSalesQty = useMemo(() => GOALS_2026.companiesAnnual / 12, []);
   const monthGoalMeetingsBooked = GOALS_2026.meetingsBookedMonthly;
-  const monthGoalMeetingsRealized = Math.round(GOALS_2026.meetingsBookedMonthly * (GOALS_2026.showRatePct / 100));
+  const monthGoalMeetingsRealized = useMemo(
+    () => Math.round((GOALS_2026.meetingsBookedMonthly * GOALS_2026.showRatePct) / 100),
+    []
+  );
 
-  const ytdGoalSales = useMemo(() => GOALS_2026.companiesAnnual * ytdDays.frac, [ytdDays.frac]);
-  const ytdGoalRevenue = useMemo(() => GOALS_2026.revenueAnnual * ytdDays.frac, [ytdDays.frac]);
+  const ytdGoalRevenue = useMemo(() => GOALS_2026.revenueAnnual * ytdFrac, [ytdFrac]);
+  const ytdGoalSalesQty = useMemo(() => GOALS_2026.companiesAnnual * ytdFrac, [ytdFrac]);
+  const ytdGoalMeetingsBooked = useMemo(() => GOALS_2026.meetingsBookedMonthly * 12 * ytdFrac, [ytdFrac]);
+  const ytdGoalMeetingsRealized = useMemo(
+    () => (GOALS_2026.meetingsBookedMonthly * 12 * ytdFrac * GOALS_2026.showRatePct) / 100,
+    [ytdFrac]
+  );
 
-  const annualMeetingsBooked = GOALS_2026.meetingsBookedMonthly * 12;
-  const annualMeetingsRealized = annualMeetingsBooked * (GOALS_2026.showRatePct / 100);
-
-  const ytdGoalMeetingsBooked = useMemo(() => annualMeetingsBooked * ytdDays.frac, [ytdDays.frac]);
-  const ytdGoalMeetingsRealized = useMemo(() => annualMeetingsRealized * ytdDays.frac, [ytdDays.frac]);
-
-  // ---------------- TOP PROGRESS ----------------
+  // ---------- Top progress (annual) ----------
   const progressRevenuePct = useMemo(
     () => safeDiv(ytdSalesValue * 100, GOALS_2026.revenueAnnual),
     [ytdSalesValue]
@@ -488,14 +414,13 @@ export default function MetaGlobalPage() {
     [companiesYTD]
   );
 
-  // ---------------- UI ----------------
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="text-lg font-semibold">Meta Global</div>
-          <div className="text-sm text-slate-400">Metas do ano + desempenho do mês (dados reais).</div>
+          <div className="text-sm text-slate-400">Metas do ano + desempenho (dados reais).</div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -520,7 +445,9 @@ export default function MetaGlobalPage() {
       </div>
 
       {err ? (
-        <div className="rounded-3xl border border-red-900/50 bg-red-950/30 px-5 py-4 text-sm text-red-200">{err}</div>
+        <div className="rounded-3xl border border-red-900/50 bg-red-950/30 px-5 py-4 text-sm text-red-200">
+          {err}
+        </div>
       ) : null}
 
       {/* Topo: 2 cards lado a lado */}
@@ -536,7 +463,7 @@ export default function MetaGlobalPage() {
               value={brl(ytdSalesValue)}
               hint={`Meta YTD (proporcional): ${brl(ytdGoalRevenue)}`}
             />
-            <Stat label="Progresso anual" value={pctFmt(progressRevenuePct)} hint="baseado nas vendas (deal_date)" />
+            <Stat label="Progresso anual" value={pctFmt(progressRevenuePct)} hint="" />
           </div>
 
           <div className="mt-4">
@@ -553,9 +480,9 @@ export default function MetaGlobalPage() {
             <Stat
               label="Real (acumulado)"
               value={String(companiesYTD)}
-              hint={`Meta YTD (proporcional): ${Math.round(ytdGoalSales)} vendas`}
+              hint={`Meta YTD (proporcional): ${Math.round(ytdGoalSalesQty)} vendas`}
             />
-            <Stat label="Progresso anual" value={pctFmt(progressCompaniesPct)} hint="1 venda = 1 empresa" />
+            <Stat label="Progresso anual" value={pctFmt(progressCompaniesPct)} hint="" />
           </div>
 
           <div className="mt-4">
@@ -564,311 +491,265 @@ export default function MetaGlobalPage() {
         </Card>
       </div>
 
-      {/* ===================== INDICADORES YTD (primeiro) ===================== */}
-      <Card
-        title="Indicadores YTD"
-        subtitle={`Período: ${yearStart} → ${ytdEnd} (meta proporcional ao ano, até hoje)`}
-      >
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-4">
-          {/* Linha 1: card grande + 2 pequenos */}
-          <div className="lg:col-span-2">
-            <MetricBigCard
-              title="Vendas YTD"
-              tag="YTD"
-              subtitle="Quantidade + valor (deal_date)."
-              leftLabel="Vendas (qtd)"
-              leftValue={ytdSalesQty}
-              leftMeta={
-                <>
-                  Meta YTD: <span className="text-slate-200">{Math.round(ytdGoalSales)}</span>
-                </>
-              }
-              leftDelta={<DeltaPill real={ytdSalesQty} target={Math.round(ytdGoalSales)} />}
-              rightLabel="Vendas (R$)"
-              rightValue={brl(ytdSalesValue)}
-              rightMeta={
-                <>
+      {/* =========================
+          INDICADORES YTD (1º)
+         ========================= */}
+      <Card title="Indicadores YTD" subtitle={`Período: ${yearStart} → ${ytdEnd} (meta proporcional ao ano, até hoje)`}>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+          {/* BIG: Vendas YTD */}
+          <div className="lg:col-span-2 rounded-3xl border border-slate-800 bg-slate-950/20 px-6 py-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-base font-semibold">Vendas YTD</div>
+                <div className="text-xs text-slate-400">Quantidade + valor</div>
+              </div>
+              <Pill>YTD</Pill>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
+                <div className="text-xs text-slate-400">Vendas (qtd)</div>
+                <div className="mt-1 text-2xl font-semibold">{ytdSalesQty}</div>
+                <div className="mt-2 text-xs text-slate-400">
+                  Meta YTD: <span className="text-slate-200">{Math.round(ytdGoalSalesQty)}</span>
+                </div>
+                <div className="mt-2">{deltaPill(ytdSalesQty, ytdGoalSalesQty)}</div>
+              </div>
+
+              <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
+                <div className="text-xs text-slate-400">Vendas (R$)</div>
+                <div className="mt-1 text-2xl font-semibold">{brl(ytdSalesValue)}</div>
+                <div className="mt-2 text-xs text-slate-400">
                   Meta YTD: <span className="text-slate-200">{brl(ytdGoalRevenue)}</span>
-                </>
-              }
-              rightDelta={<DeltaPill real={ytdSalesValue} target={ytdGoalRevenue} />}
-              progressLabel="Progresso do faturamento anual"
-              progressPct={safeDiv(ytdSalesValue * 100, GOALS_2026.revenueAnnual)}
-            />
+                </div>
+                <div className="mt-2">{deltaPill(ytdSalesValue, ytdGoalRevenue)}</div>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <div className="mb-2 text-xs text-slate-400">Progresso do faturamento anual</div>
+              <ProgressBar valuePct={progressRevenuePct} />
+            </div>
           </div>
 
-          <div>
-            <MetricSmallCard
-              title="Reuniões marcadas YTD"
-              value={meetingsBookedYTD}
-              metaLine={
-                <>
-                  Meta YTD: <span className="text-slate-200">{Math.round(ytdGoalMeetingsBooked)}</span>
-                </>
-              }
-              delta={<DeltaPill real={meetingsBookedYTD} target={ytdGoalMeetingsBooked} />}
-            />
+          {/* small: Reuniões marcadas YTD (daily_funnel.reuniao) */}
+          <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-6 py-5">
+            <div className="text-xs text-slate-400">Reuniões marcadas YTD</div>
+            <div className="mt-1 text-3xl font-semibold">{meetingsBookedYTD}</div>
+            <div className="mt-2 text-xs text-slate-400">
+              Meta YTD: <span className="text-slate-200">{Math.round(ytdGoalMeetingsBooked)}</span>
+            </div>
+            <div className="mt-2">{deltaPill(meetingsBookedYTD, ytdGoalMeetingsBooked)}</div>
           </div>
 
-          <div>
-            <MetricSmallCard
-              title="Reuniões realizadas YTD"
-              value={meetingsRealizedYTD}
-              metaLine={
-                <>
-                  Meta YTD: <span className="text-slate-200">{Math.round(ytdGoalMeetingsRealized)}</span>
-                </>
-              }
-              delta={<DeltaPill real={meetingsRealizedYTD} target={ytdGoalMeetingsRealized} />}
-            />
+          {/* small: Show-rate YTD */}
+          <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-6 py-5">
+            <div className="text-xs text-slate-400">Show-rate YTD</div>
+            <div className="mt-1 text-3xl font-semibold">{pctFmt(showRateYtdPct)}</div>
+            <div className="mt-2 text-xs text-slate-400">
+              Meta: <span className="text-slate-200">{GOALS_2026.showRatePct}%</span>
+            </div>
+            <div className="mt-2">{deltaPill(showRateYtdPct, GOALS_2026.showRatePct)}</div>
           </div>
 
-          {/* Linha 2: card grande + 2 pequenos */}
-          <div className="lg:col-span-2">
-            <MetricBigCard
-              title="Custo por venda YTD"
-              tag="YTD"
-              subtitle="Meta Ads (spend) / vendas (deal_date)."
-              leftLabel="Custo por venda (total)"
-              leftValue={Number.isFinite(costPerSaleYTDTot) ? brl(costPerSaleYTDTot) : "—"}
-              leftMeta={
-                <>
+          {/* BIG: Custo por venda YTD */}
+          <div className="lg:col-span-2 rounded-3xl border border-slate-800 bg-slate-950/20 px-6 py-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-base font-semibold">Custo por venda YTD</div>
+                <div className="text-xs text-slate-400">Meta Ads / vendas</div>
+              </div>
+              <Pill>YTD</Pill>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
+                <div className="text-xs text-slate-400">Custo por venda (total)</div>
+                <div className="mt-1 text-2xl font-semibold">{brl(costPerSaleYtdTotal)}</div>
+                <div className="mt-2 text-xs text-slate-400">
                   Meta: <span className="text-slate-200">{brl(GOALS_2026.costPerSale)}</span>
-                </>
-              }
-              leftDelta={<DeltaPill real={Number.isFinite(costPerSaleYTDTot) ? costPerSaleYTDTot : 0} target={GOALS_2026.costPerSale} disabled={!Number.isFinite(costPerSaleYTDTot)} />}
-              rightLabel="Por perfil"
-              rightValue={
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-xs text-slate-400">Harley</div>
-                    <div className="text-sm font-semibold">
-                      {Number.isFinite(costPerSaleYTDHarley) ? brl(costPerSaleYTDHarley) : "—"}
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-xs text-slate-400">Giovanni</div>
-                    <div className="text-sm font-semibold">
-                      {Number.isFinite(costPerSaleYTDGio) ? brl(costPerSaleYTDGio) : "—"}
-                    </div>
-                  </div>
                 </div>
-              }
-              rightMeta={
-                <div className="flex flex-wrap gap-2">
-                  <DeltaPill
-                    real={Number.isFinite(costPerSaleYTDHarley) ? costPerSaleYTDHarley : 0}
-                    target={GOALS_2026.costPerSale}
-                    disabled={!Number.isFinite(costPerSaleYTDHarley)}
-                  />
-                  <DeltaPill
-                    real={Number.isFinite(costPerSaleYTDGio) ? costPerSaleYTDGio : 0}
-                    target={GOALS_2026.costPerSale}
-                    disabled={!Number.isFinite(costPerSaleYTDGio)}
-                  />
+                <div className="mt-2">{deltaPill(costPerSaleYtdTotal, GOALS_2026.costPerSale)}</div>
+              </div>
+
+              <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
+                <div className="text-xs text-slate-400">Por perfil</div>
+
+                <div className="mt-3 flex items-center justify-between gap-2">
+                  <div className="text-xs text-slate-400">Harley</div>
+                  <div className="text-sm font-semibold">{brl(costPerSaleYtdHarley)}</div>
                 </div>
-              }
-              rightDelta={null}
-              progressLabel="Custo vs meta (quanto menor, melhor)"
-              progressPct={Number.isFinite(costPerSaleYTDTot) ? safeDiv(GOALS_2026.costPerSale * 100, costPerSaleYTDTot) : 0}
-            />
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <div className="text-xs text-slate-400">Giovanni</div>
+                  <div className="text-sm font-semibold">{brl(costPerSaleYtdGio)}</div>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {deltaPill(costPerSaleYtdHarley, GOALS_2026.costPerSale)}
+                  {deltaPill(costPerSaleYtdGio, GOALS_2026.costPerSale)}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <div className="mb-2 text-xs text-slate-400">Custo vs meta (quanto menor, melhor)</div>
+              {/* “progresso” invertido: se custo <= meta, 100%. Se acima, cai. */}
+              <ProgressBar valuePct={GOALS_2026.costPerSale > 0 ? safeDiv(GOALS_2026.costPerSale * 100, costPerSaleYtdTotal || 1) : 0} />
+            </div>
           </div>
 
-          <div>
-            <MetricSmallCard
-              title="Show-rate YTD"
-              value={Number.isFinite(showRateYTDPct) ? pctFmt(showRateYTDPct) : "—"}
-              metaLine={
-                <>
-                  Meta: <span className="text-slate-200">{GOALS_2026.showRatePct}%</span>
-                </>
-              }
-              delta={
-                <DeltaPill
-                  real={Number.isFinite(showRateYTDPct) ? showRateYTDPct : 0}
-                  target={GOALS_2026.showRatePct}
-                  disabled={!Number.isFinite(showRateYTDPct)}
-                />
-              }
-            />
+          {/* small: Reuniões realizadas YTD */}
+          <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-6 py-5">
+            <div className="text-xs text-slate-400">Reuniões realizadas YTD</div>
+            <div className="mt-1 text-3xl font-semibold">{meetingsRealizedYTD}</div>
+            <div className="mt-2 text-xs text-slate-400">
+              Meta YTD: <span className="text-slate-200">{Math.round(ytdGoalMeetingsRealized)}</span>
+            </div>
+            <div className="mt-2">{deltaPill(meetingsRealizedYTD, ytdGoalMeetingsRealized)}</div>
           </div>
 
-          <div>
-            <MetricSmallCard
-              title="% Renovações YTD"
-              value={Number.isFinite(renewalsYTD.pct) ? pctFmt(renewalsYTD.pct) : "—"}
-              metaLine={
-                <>
-                  Meta: <span className="text-slate-200">{GOALS_2026.renewalsPct}%</span>{" "}
-                  <span className="text-slate-500">
-                    (base: {renewalsYTD.base} • renovou: {renewalsYTD.renewed})
-                  </span>
-                </>
-              }
-              delta={
-                <DeltaPill
-                  real={Number.isFinite(renewalsYTD.pct) ? renewalsYTD.pct : 0}
-                  target={GOALS_2026.renewalsPct}
-                  disabled={!Number.isFinite(renewalsYTD.pct)}
-                />
-              }
-            />
+          {/* small: % Renovações YTD */}
+          <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-6 py-5">
+            <div className="text-xs text-slate-400">% Renovações YTD</div>
+            <div className="mt-1 text-3xl font-semibold">{pctFmt(renewalsYtdPct)}</div>
+            <div className="mt-2 text-xs text-slate-400">
+              Meta: <span className="text-slate-200">{GOALS_2026.renewalsPct}%</span>
+            </div>
+            <div className="mt-2">{deltaPill(renewalsYtdPct, GOALS_2026.renewalsPct)}</div>
           </div>
         </div>
       </Card>
 
-      {/* ===================== INDICADORES DO MÊS (depois) ===================== */}
+      {/* =========================
+          INDICADORES DO MÊS (2º)
+         ========================= */}
       <Card title="Indicadores do mês" subtitle={`Período: ${monthStart} → ${monthEnd}`}>
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-4">
-          {/* Linha 1: card grande + 2 pequenos */}
-          <div className="lg:col-span-2">
-            <MetricBigCard
-              title="Vendas do mês"
-              tag="Mês"
-              subtitle="Quantidade + valor (deal_date)."
-              leftLabel="Vendas (qtd)"
-              leftValue={monthSalesQty}
-              leftMeta={
-                <>
-                  Meta do mês: <span className="text-slate-200">{Math.round(monthGoalSales)}</span>
-                </>
-              }
-              leftDelta={<DeltaPill real={monthSalesQty} target={Math.round(monthGoalSales)} />}
-              rightLabel="Vendas (R$)"
-              rightValue={brl(monthSalesValue)}
-              rightMeta={
-                <>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+          {/* BIG: Vendas do mês */}
+          <div className="lg:col-span-2 rounded-3xl border border-slate-800 bg-slate-950/20 px-6 py-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-base font-semibold">Vendas do mês</div>
+                <div className="text-xs text-slate-400">Quantidade + valor</div>
+              </div>
+              <Pill>Mês</Pill>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
+                <div className="text-xs text-slate-400">Vendas (qtd)</div>
+                <div className="mt-1 text-2xl font-semibold">{monthSalesQty}</div>
+                <div className="mt-2 text-xs text-slate-400">
+                  Meta do mês: <span className="text-slate-200">{Math.round(monthGoalSalesQty)}</span>
+                </div>
+                <div className="mt-2">{deltaPill(monthSalesQty, monthGoalSalesQty)}</div>
+              </div>
+
+              <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
+                <div className="text-xs text-slate-400">Vendas (R$)</div>
+                <div className="mt-1 text-2xl font-semibold">{brl(monthSalesValue)}</div>
+                <div className="mt-2 text-xs text-slate-400">
                   Meta do mês: <span className="text-slate-200">{brl(monthGoalRevenue)}</span>
-                </>
-              }
-              rightDelta={<DeltaPill real={monthSalesValue} target={monthGoalRevenue} />}
-              progressLabel="Progresso da meta de faturamento do mês"
-              progressPct={safeDiv(monthSalesValue * 100, monthGoalRevenue)}
-            />
+                </div>
+                <div className="mt-2">{deltaPill(monthSalesValue, monthGoalRevenue)}</div>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <div className="mb-2 text-xs text-slate-400">Progresso da meta de faturamento do mês</div>
+              <ProgressBar valuePct={safeDiv(monthSalesValue * 100, monthGoalRevenue)} />
+            </div>
           </div>
 
-          <div>
-            <MetricSmallCard
-              title="Reuniões marcadas"
-              value={meetingsBookedMonth}
-              metaLine={
-                <>
-                  Meta: <span className="text-slate-200">{monthGoalMeetingsBooked}</span>
-                </>
-              }
-              delta={<DeltaPill real={meetingsBookedMonth} target={monthGoalMeetingsBooked} />}
-            />
+          {/* small: Reuniões marcadas (daily_funnel.reuniao) */}
+          <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-6 py-5">
+            <div className="text-xs text-slate-400">Reuniões marcadas</div>
+            <div className="mt-1 text-3xl font-semibold">{meetingsBookedMonth}</div>
+            <div className="mt-2 text-xs text-slate-400">
+              Meta: <span className="text-slate-200">{monthGoalMeetingsBooked}</span>
+            </div>
+            <div className="mt-2">{deltaPill(meetingsBookedMonth, monthGoalMeetingsBooked)}</div>
           </div>
 
-          <div>
-            <MetricSmallCard
-              title="Reuniões realizadas"
-              value={meetingsRealizedMonth}
-              metaLine={
-                <>
-                  Meta: <span className="text-slate-200">{monthGoalMeetingsRealized}</span>
-                </>
-              }
-              delta={<DeltaPill real={meetingsRealizedMonth} target={monthGoalMeetingsRealized} />}
-            />
+          {/* small: Reuniões realizadas (status) */}
+          <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-6 py-5">
+            <div className="text-xs text-slate-400">Reuniões realizadas</div>
+            <div className="mt-1 text-3xl font-semibold">{meetingsRealizedMonth}</div>
+            <div className="mt-2 text-xs text-slate-400">
+              Meta: <span className="text-slate-200">{monthGoalMeetingsRealized}</span>
+            </div>
+            <div className="mt-2">{deltaPill(meetingsRealizedMonth, monthGoalMeetingsRealized)}</div>
           </div>
 
-          {/* Linha 2: card grande + 2 pequenos */}
-          <div className="lg:col-span-2">
-            <MetricBigCard
-              title="Custo por venda (mês)"
-              tag="Mês"
-              subtitle="Meta Ads (spend) / vendas (deal_date)."
-              leftLabel="Custo por venda (total)"
-              leftValue={Number.isFinite(costPerSaleMonthTot) ? brl(costPerSaleMonthTot) : "—"}
-              leftMeta={
-                <>
+          {/* BIG: Custo por venda (mês) */}
+          <div className="lg:col-span-2 rounded-3xl border border-slate-800 bg-slate-950/20 px-6 py-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-base font-semibold">Custo por venda (mês)</div>
+                <div className="text-xs text-slate-400">Meta Ads / vendas</div>
+              </div>
+              <Pill>Mês</Pill>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
+                <div className="text-xs text-slate-400">Custo por venda (total)</div>
+                <div className="mt-1 text-2xl font-semibold">{brl(costPerSaleMonthTotal)}</div>
+                <div className="mt-2 text-xs text-slate-400">
                   Meta: <span className="text-slate-200">{brl(GOALS_2026.costPerSale)}</span>
-                </>
-              }
-              leftDelta={
-                <DeltaPill
-                  real={Number.isFinite(costPerSaleMonthTot) ? costPerSaleMonthTot : 0}
-                  target={GOALS_2026.costPerSale}
-                  disabled={!Number.isFinite(costPerSaleMonthTot)}
-                />
-              }
-              rightLabel="Por perfil"
-              rightValue={
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-xs text-slate-400">Harley</div>
-                    <div className="text-sm font-semibold">
-                      {Number.isFinite(costPerSaleMonthHarley) ? brl(costPerSaleMonthHarley) : "—"}
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-xs text-slate-400">Giovanni</div>
-                    <div className="text-sm font-semibold">
-                      {Number.isFinite(costPerSaleMonthGio) ? brl(costPerSaleMonthGio) : "—"}
-                    </div>
-                  </div>
                 </div>
-              }
-              rightMeta={
-                <div className="flex flex-wrap gap-2">
-                  <DeltaPill
-                    real={Number.isFinite(costPerSaleMonthHarley) ? costPerSaleMonthHarley : 0}
-                    target={GOALS_2026.costPerSale}
-                    disabled={!Number.isFinite(costPerSaleMonthHarley)}
-                  />
-                  <DeltaPill
-                    real={Number.isFinite(costPerSaleMonthGio) ? costPerSaleMonthGio : 0}
-                    target={GOALS_2026.costPerSale}
-                    disabled={!Number.isFinite(costPerSaleMonthGio)}
-                  />
+                <div className="mt-2">{deltaPill(costPerSaleMonthTotal, GOALS_2026.costPerSale)}</div>
+              </div>
+
+              <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-5 py-4">
+                <div className="text-xs text-slate-400">Por perfil</div>
+
+                <div className="mt-3 flex items-center justify-between gap-2">
+                  <div className="text-xs text-slate-400">Harley</div>
+                  <div className="text-sm font-semibold">{brl(costPerSaleMonthHarley)}</div>
                 </div>
-              }
-              rightDelta={null}
-              progressLabel="Custo vs meta (quanto menor, melhor)"
-              progressPct={Number.isFinite(costPerSaleMonthTot) ? safeDiv(GOALS_2026.costPerSale * 100, costPerSaleMonthTot) : 0}
-            />
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <div className="text-xs text-slate-400">Giovanni</div>
+                  <div className="text-sm font-semibold">{brl(costPerSaleMonthGio)}</div>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {deltaPill(costPerSaleMonthHarley, GOALS_2026.costPerSale)}
+                  {deltaPill(costPerSaleMonthGio, GOALS_2026.costPerSale)}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <div className="mb-2 text-xs text-slate-400">Custo vs meta (quanto menor, melhor)</div>
+              <ProgressBar
+                valuePct={
+                  GOALS_2026.costPerSale > 0
+                    ? safeDiv(GOALS_2026.costPerSale * 100, costPerSaleMonthTotal || 1)
+                    : 0
+                }
+              />
+            </div>
           </div>
 
-          <div>
-            <MetricSmallCard
-              title="Show-rate"
-              value={Number.isFinite(showRateMonthPct) ? pctFmt(showRateMonthPct) : "—"}
-              metaLine={
-                <>
-                  Meta: <span className="text-slate-200">{GOALS_2026.showRatePct}%</span>
-                </>
-              }
-              delta={
-                <DeltaPill
-                  real={Number.isFinite(showRateMonthPct) ? showRateMonthPct : 0}
-                  target={GOALS_2026.showRatePct}
-                  disabled={!Number.isFinite(showRateMonthPct)}
-                />
-              }
-            />
+          {/* small: Show-rate */}
+          <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-6 py-5">
+            <div className="text-xs text-slate-400">Show-rate</div>
+            <div className="mt-1 text-3xl font-semibold">{pctFmt(showRateMonthPct)}</div>
+            <div className="mt-2 text-xs text-slate-400">
+              Meta: <span className="text-slate-200">{GOALS_2026.showRatePct}%</span>
+            </div>
+            <div className="mt-2">{deltaPill(showRateMonthPct, GOALS_2026.showRatePct)}</div>
           </div>
 
-          <div>
-            <MetricSmallCard
-              title="% Renovações"
-              value={Number.isFinite(renewalsMonth.pct) ? pctFmt(renewalsMonth.pct) : "—"}
-              metaLine={
-                <>
-                  Meta: <span className="text-slate-200">{GOALS_2026.renewalsPct}%</span>{" "}
-                  <span className="text-slate-500">
-                    (base: {renewalsMonth.base} • renovou: {renewalsMonth.renewed})
-                  </span>
-                </>
-              }
-              delta={
-                <DeltaPill
-                  real={Number.isFinite(renewalsMonth.pct) ? renewalsMonth.pct : 0}
-                  target={GOALS_2026.renewalsPct}
-                  disabled={!Number.isFinite(renewalsMonth.pct)}
-                />
-              }
-            />
+          {/* small: % Renovações */}
+          <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-6 py-5">
+            <div className="text-xs text-slate-400">% Renovações</div>
+            <div className="mt-1 text-3xl font-semibold">{pctFmt(renewalsMonthPct)}</div>
+            <div className="mt-2 text-xs text-slate-400">
+              Meta: <span className="text-slate-200">{GOALS_2026.renewalsPct}%</span>
+            </div>
+            <div className="mt-2">{deltaPill(renewalsMonthPct, GOALS_2026.renewalsPct)}</div>
           </div>
         </div>
       </Card>
