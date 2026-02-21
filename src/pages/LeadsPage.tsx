@@ -472,7 +472,7 @@ export default function LeadsPage() {
 
         <Card
           title="Leads de reunião"
-          subtitle='Atualize o status do lead: reunião realizada, no-show ou venda. "Venda" também conta como "reunião realizada".'
+          subtitle='CLOSER: Atualize o status do lead: reunião realizada, no-show ou venda.'
           right={<Button onClick={() => openLeadModal(profile)}>Adicionar lead</Button>}
         >
           <Table
