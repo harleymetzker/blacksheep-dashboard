@@ -1,4 +1,3 @@
-// src/pages/OpsPage.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { Button, Card, Input, Label, Modal, Select, Pill, Table, Stat } from "../components/ui";
 import { todayISO, brl, safeDiv } from "../lib/utils";
@@ -747,7 +746,7 @@ const ltvByCustomer = useMemo(() => {
       {/* 3) CUSTOMER SUCCESS */}
       <Card
         title="Customer Success"
-        subtitle="LTV = entry_paid_value + soma de renovações. Valor pago = valor atual do ciclo."
+        subtitle="Clique no cliente para abrir os dados."
         right={<Button onClick={openAddCustomer}>Adicionar cliente</Button>}
       >
         <Table
@@ -815,7 +814,7 @@ const ltvByCustomer = useMemo(() => {
       </Card>
 
       {/* 5) CONTADORES */}
-      <Card title="Indicadores de base (cadastro)" subtitle="Não renovou = passou 30 dias do renewal_date sem renovação.">
+      <Card title="Indicadores de base (cadastro)" subtitle="Principais KPIs de CS.">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
           <Stat label="Clientes cadastrados" value={String(csStats.total)} />
           <Stat label="Clientes ativos" value={`${csStats.active} (${csStats.pctActive.toFixed(1)}%)`} />
