@@ -6,6 +6,7 @@ import {
   listMetaAds,
   listOpsCustomers,
   listOpsCustomerRenewals,
+  listDailyFunnel,
 } from "../lib/db";
 import { Profile } from "../lib/utils";
 
@@ -113,6 +114,8 @@ export default function MetaGlobalPage() {
   const [metaYTDRows, setMetaYTDRows] = useState<any[]>([]);
   const [leadsHarleyAll, setLeadsHarleyAll] = useState<any[]>([]);
   const [leadsGioAll, setLeadsGioAll] = useState<any[]>([]);
+  const [dailyHarleyAll, setDailyHarleyAll] = useState<any[]>([]);
+  const [dailyGioAll, setDailyGioAll] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [renewals, setRenewals] = useState<any[]>([]);
 
@@ -139,11 +142,13 @@ export default function MetaGlobalPage() {
     try {
       const queryEnd = yearEnd >= todayISO() ? yearEnd : todayISO();
 
-      const [metaMonth, metaYTD, mhAll, mgAll, cs, rn] = await Promise.all([
+      const [metaMonth, metaYTD, mhAll, mgAll, dhAll, dgAll, cs, rn] = await Promise.all([
         listMetaAds(monthStart, monthEnd),
         listMetaAds(yearStart, ytdEnd),
         listMeetingLeads("harley", "2000-01-01", queryEnd),
         listMeetingLeads("giovanni", "2000-01-01", queryEnd),
+        listDailyFunnel("harley", "2000-01-01", queryEnd),
+        listDailyFunnel("giovanni", "2000-01-01", queryEnd),
         listOpsCustomers(),
         listOpsCustomerRenewals(),
       ]);
@@ -152,6 +157,8 @@ export default function MetaGlobalPage() {
       setMetaYTDRows(metaYTD ?? []);
       setLeadsHarleyAll(mhAll ?? []);
       setLeadsGioAll(mgAll ?? []);
+      setDailyHarleyAll(dhAll ?? []);
+      setDailyGioAll(dgAll ?? []);
       setCustomers(cs ?? []);
       setRenewals(rn ?? []);
     } catch (e: any) {
@@ -202,44 +209,51 @@ export default function MetaGlobalPage() {
     return all.reduce((acc, r) => acc + dealValue(r), 0);
   }, [salesByProfileYTD]);
 
-  const companiesYTD = useMemo(() => salesByProfileYTD.harley.length + salesByProfileYTD.giovanni.length, [salesByProfileYTD]);
+  const companiesYTD = useMemo(
+    () => salesByProfileYTD.harley.length + salesByProfileYTD.giovanni.length,
+    [salesByProfileYTD]
+  );
 
-  // ====== MEETINGS (por lead_date) ======
-  // Status válidos agora: "reuniao_realizada" | "no_show" | "venda"
-  // (venda implica que a reunião foi realizada)
+  // ====== MEETINGS (corrigido para bater com a página Leads) ======
   const allLeads = useMemo(() => [...(leadsHarleyAll ?? []), ...(leadsGioAll ?? [])], [leadsHarleyAll, leadsGioAll]);
+  const allDaily = useMemo(() => [...(dailyHarleyAll ?? []), ...(dailyGioAll ?? [])], [dailyHarleyAll, dailyGioAll]);
 
+  // ✅ Reuniões marcadas = somatório do daily_funnel.reuniao (manual)
   const meetingsBookedMonth = useMemo(() => {
-    return allLeads.filter((r: any) => inRange(leadDateFallback(r), monthStart, monthEnd)).length;
-  }, [allLeads, monthStart, monthEnd]);
+    const rows = (allDaily ?? []).filter((r: any) => inRange(iso10(r.day), monthStart, monthEnd));
+    return rows.reduce((acc: number, r: any) => acc + Number(r.reuniao || 0), 0);
+  }, [allDaily, monthStart, monthEnd]);
 
   const meetingsBookedYTD = useMemo(() => {
-    return allLeads.filter((r: any) => inRange(leadDateFallback(r), yearStart, ytdEnd)).length;
-  }, [allLeads, yearStart, ytdEnd]);
+    const rows = (allDaily ?? []).filter((r: any) => inRange(iso10(r.day), yearStart, ytdEnd));
+    return rows.reduce((acc: number, r: any) => acc + Number(r.reuniao || 0), 0);
+  }, [allDaily, yearStart, ytdEnd]);
 
+  // ✅ Reuniões realizadas = meeting_leads status "realizou" ou "venda"
   const meetingsHeldMonth = useMemo(() => {
-    const rows = allLeads.filter((r: any) => inRange(leadDateFallback(r), monthStart, monthEnd));
+    const rows = (allLeads ?? []).filter((r: any) => inRange(leadDateFallback(r), monthStart, monthEnd));
     return rows.filter((r: any) => {
       const s = String(r.status);
-      return s === "reuniao_realizada" || s === "venda";
+      return s === "realizou" || s === "venda";
     }).length;
   }, [allLeads, monthStart, monthEnd]);
 
   const meetingsHeldYTD = useMemo(() => {
-    const rows = allLeads.filter((r: any) => inRange(leadDateFallback(r), yearStart, ytdEnd));
+    const rows = (allLeads ?? []).filter((r: any) => inRange(leadDateFallback(r), yearStart, ytdEnd));
     return rows.filter((r: any) => {
       const s = String(r.status);
-      return s === "reuniao_realizada" || s === "venda";
+      return s === "realizou" || s === "venda";
     }).length;
   }, [allLeads, yearStart, ytdEnd]);
 
+  // ✅ No-show = meeting_leads status "no_show"
   const noShowMonth = useMemo(() => {
-    const rows = allLeads.filter((r: any) => inRange(leadDateFallback(r), monthStart, monthEnd));
+    const rows = (allLeads ?? []).filter((r: any) => inRange(leadDateFallback(r), monthStart, monthEnd));
     return rows.filter((r: any) => String(r.status) === "no_show").length;
   }, [allLeads, monthStart, monthEnd]);
 
   const noShowYTD = useMemo(() => {
-    const rows = allLeads.filter((r: any) => inRange(leadDateFallback(r), yearStart, ytdEnd));
+    const rows = (allLeads ?? []).filter((r: any) => inRange(leadDateFallback(r), yearStart, ytdEnd));
     return rows.filter((r: any) => String(r.status) === "no_show").length;
   }, [allLeads, yearStart, ytdEnd]);
 
@@ -444,10 +458,7 @@ export default function MetaGlobalPage() {
       </div>
 
       {/* ===================== INDICADORES YTD (primeiro) ===================== */}
-      <Card
-        title="Indicadores YTD"
-        subtitle={`Período: ${yearStart} → ${ytdEnd} (meta proporcional ao ano, até hoje)`}
-      >
+      <Card title="Indicadores YTD" subtitle={`Período: ${yearStart} → ${ytdEnd} (meta proporcional ao ano, até hoje)`}>
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
           {/* Linha 1 */}
           <div className="lg:col-span-2 rounded-3xl border border-slate-800 bg-slate-950/20 p-6">
