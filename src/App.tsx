@@ -11,8 +11,10 @@ function NavItem({ to, children }: any) {
     <NavLink
       to={to}
       className={({ isActive }) =>
-        `px-4 py-2 rounded-xl text-sm transition ${
-          isActive ? "bg-slate-800/80 text-slate-100" : "text-slate-300 hover:bg-slate-800/50"
+        `px-4 py-2 rounded-xl text-sm transition whitespace-nowrap ${
+          isActive
+            ? "bg-slate-800/80 text-slate-100"
+            : "text-slate-300 hover:bg-slate-800/50"
         }`
       }
     >
@@ -25,13 +27,17 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50">
       <header className="border-b border-slate-800/70">
-        <div className="mx-auto max-w-7xl px-6 py-4 flex items-center justify-between">
+        <div className="mx-auto max-w-7xl px-6 py-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          {/* Título */}
           <div>
             <div className="text-lg font-semibold">Black Sheep — Dashboard</div>
-            <div className="text-xs text-slate-400">Central para não se perder entre ferramentas</div>
+            <div className="text-xs text-slate-400">
+              Central para não se perder entre ferramentas
+            </div>
           </div>
 
-          <nav className="flex gap-2">
+          {/* MENU MOBILE FRIENDLY */}
+          <nav className="flex gap-2 overflow-x-auto whitespace-nowrap [-webkit-overflow-scrolling:touch] pb-1">
             <NavItem to="/meta-global">Meta Global</NavItem>
             <NavItem to="/">Meta Ads</NavItem>
             <NavItem to="/leads">Leads</NavItem>
