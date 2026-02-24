@@ -92,6 +92,24 @@ function olderThanDays(dateISO?: string | null, days = 30) {
   return d < limit;
 }
 
+function inRangeDays(dateISO?: string | null, pastDays = 30, futureDays = 30) {
+  const d = parseISODate(dateISO);
+  if (!d) return false;
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const from = addDays(start, -pastDays);
+  const to = addDays(start, futureDays);
+  return d >= from && d <= to;
+}
+
+function isOverdue(dateISO?: string | null) {
+  const d = parseISODate(dateISO);
+  if (!d) return false;
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return d < start;
+}
+
 function safeNum(v: any) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -112,6 +130,13 @@ export default function OpsPage() {
   const [items, setItems] = useState<OpsImportantItem[]>([]);
   const [customers, setCustomers] = useState<OpsCustomer[]>([]);
   const [renewals, setRenewals] = useState<OpsCustomerRenewal[]>([]);
+
+  // ✅ Dados importantes colapsável
+  const [importantOpen, setImportantOpen] = useState(false);
+
+  // ✅ Customer Success: paginação e busca
+  const [csLimit, setCsLimit] = useState(7);
+  const [csQuery, setCsQuery] = useState("");
 
   // ---------- Tasks: view modal ----------
   const [openTaskView, setOpenTaskView] = useState(false);
@@ -243,29 +268,48 @@ export default function OpsPage() {
     return map;
   }, [renewals]);
 
-// ✅ LTV: entry_paid_value (imutável) + soma das renovações
-const ltvByCustomer = useMemo(() => {
-  const map = new Map<string, number>();
-  for (const c of customers ?? []) {
-    const cid = String((c as any).id ?? "");
-    const base = safeNum((c as any).entry_paid_value ?? 0); // ✅ sem fallback em paid_value
-    const rs = renewalsByCustomer.get(cid) ?? [];
-    const sumRenewals = rs.reduce((acc, r) => acc + safeNum((r as any).paid_value ?? 0), 0);
-    map.set(cid, base + sumRenewals);
-  }
-  return map;
-}, [customers, renewalsByCustomer]);
+  // ✅ LTV: entry_paid_value (imutável) + soma das renovações
+  const ltvByCustomer = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const c of customers ?? []) {
+      const cid = String((c as any).id ?? "");
+      const base = safeNum((c as any).entry_paid_value ?? 0); // ✅ sem fallback em paid_value
+      const rs = renewalsByCustomer.get(cid) ?? [];
+      const sumRenewals = rs.reduce((acc, r) => acc + safeNum((r as any).paid_value ?? 0), 0);
+      map.set(cid, base + sumRenewals);
+    }
+    return map;
+  }, [customers, renewalsByCustomer]);
 
-  const upcomingRenewals = useMemo(() => {
+  // ✅ Vencimentos: 30 dias anteriores + 30 dias próximos (com destaque atrasado)
+  const renewalWindow = useMemo(() => {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const from = addDays(start, -30).toISOString().slice(0, 10);
+    const to = addDays(start, 30).toISOString().slice(0, 10);
+    const today = start.toISOString().slice(0, 10);
+    return { from, to, today };
+  }, []);
+
+  const dueCustomersWindow = useMemo(() => {
     return (customers ?? [])
-      .filter((c: any) => inNextDays(c.renewal_date, 15))
+      .filter((c: any) => inRangeDays(c.renewal_date, 30, 30))
       .slice()
       .sort((a: any, b: any) => String(a.renewal_date ?? "").localeCompare(String(b.renewal_date ?? "")));
   }, [customers]);
 
+  const upcomingRenewals = useMemo(() => {
+    // mantém o nome "upcomingRenewals" pra não mexer no resto,
+    // mas agora inclui atrasados (30 dias para trás) + próximos 30 dias
+    return dueCustomersWindow;
+  }, [dueCustomersWindow]);
+
   const totalToRenew30 = useMemo(() => {
-    return (upcomingRenewals ?? []).reduce((acc: number, c: any) => acc + safeNum(c.paid_value ?? 0), 0);
-  }, [upcomingRenewals]);
+    // total SOMENTE dos próximos 30 dias (não inclui atrasados)
+    return (customers ?? [])
+      .filter((c: any) => inNextDays(c.renewal_date, 30))
+      .reduce((acc: number, c: any) => acc + safeNum(c.paid_value ?? 0), 0);
+  }, [customers]);
 
   const totalCollectedRenewals = useMemo(() => {
     return (renewals ?? []).reduce((acc: number, r: any) => acc + safeNum(r.paid_value ?? 0), 0);
@@ -656,6 +700,21 @@ const ltvByCustomer = useMemo(() => {
     [renewalsByCustomer, ltvByCustomer]
   );
 
+  // ✅ CS: busca + paginação 7/7
+  const customersFiltered = useMemo(() => {
+    const q = csQuery.trim().toLowerCase();
+    if (!q) return customers ?? [];
+    return (customers ?? []).filter((c: any) => String(c?.name ?? "").toLowerCase().includes(q));
+  }, [customers, csQuery]);
+
+  const customersVisible = useMemo(() => {
+    return (customersFiltered ?? []).slice(0, csLimit);
+  }, [customersFiltered, csLimit]);
+
+  useEffect(() => {
+    setCsLimit(7);
+  }, [csQuery, customers]);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -706,41 +765,57 @@ const ltvByCustomer = useMemo(() => {
         </div>
       </Card>
 
-      {/* 2) DADOS IMPORTANTES */}
+      {/* 2) DADOS IMPORTANTES (colapsável) */}
       <Card
         title="Dados importantes"
         subtitle="Central do time: logins/senhas, links úteis, materiais e processos internos. Apenas links."
         right={
-          <Button variant="outline" onClick={openAddItem}>
-            Adicionar item
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setImportantOpen((v) => !v)}
+              aria-label={importantOpen ? "Fechar" : "Abrir"}
+              title={importantOpen ? "Fechar" : "Abrir"}
+            >
+              {importantOpen ? "—" : "+"}
+            </Button>
+            <Button variant="outline" onClick={openAddItem}>
+              Adicionar item
+            </Button>
+          </div>
         }
       >
-        <div className="space-y-6">
-          {["login", "link", "material", "procedimento", "outro"].map((k) => {
-            const arr = itemsByCategory.get(k) ?? [];
-            return (
-              <div key={k} className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold">{categoryLabel(k as any)}</div>
-                  <Pill>{arr.length}</Pill>
-                </div>
-
-                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                  {arr.map((it) => (
-                    <ImportantItemCard key={String((it as any).id)} it={it} />
-                  ))}
-                </div>
-
-                {arr.length === 0 ? (
-                  <div className="rounded-3xl border border-slate-800 bg-slate-950/10 px-4 py-6 text-sm text-slate-500">
-                    Nenhum item nesta categoria.
+        {importantOpen ? (
+          <div className="space-y-6">
+            {["login", "link", "material", "procedimento", "outro"].map((k) => {
+              const arr = itemsByCategory.get(k) ?? [];
+              return (
+                <div key={k} className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-semibold">{categoryLabel(k as any)}</div>
+                    <Pill>{arr.length}</Pill>
                   </div>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
+
+                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                    {arr.map((it) => (
+                      <ImportantItemCard key={String((it as any).id)} it={it} />
+                    ))}
+                  </div>
+
+                  {arr.length === 0 ? (
+                    <div className="rounded-3xl border border-slate-800 bg-slate-950/10 px-4 py-6 text-sm text-slate-500">
+                      Nenhum item nesta categoria.
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-3xl border border-slate-800 bg-slate-950/10 px-4 py-6 text-sm text-slate-500">
+            Conteúdo recolhido. Clique no “+” para abrir.
+          </div>
+        )}
       </Card>
 
       {/* 3) CUSTOMER SUCCESS */}
@@ -749,9 +824,16 @@ const ltvByCustomer = useMemo(() => {
         subtitle="Clique no cliente para abrir os dados."
         right={<Button onClick={openAddCustomer}>Adicionar cliente</Button>}
       >
+        <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="md:col-span-2">
+            <Label>Buscar por nome</Label>
+            <Input value={csQuery} onChange={(e) => setCsQuery(e.target.value)} placeholder="Ex: Rafael" />
+          </div>
+        </div>
+
         <Table
           columns={customerColumns as any}
-          rows={customers as any}
+          rows={customersVisible as any}
           rowKey={(r: any) => r.id}
           actions={(r: any) => (
             <div className="flex justify-end gap-2">
@@ -770,45 +852,65 @@ const ltvByCustomer = useMemo(() => {
             </div>
           )}
         />
+
+        {customersFiltered.length > customersVisible.length ? (
+          <div className="mt-3 flex justify-center">
+            <Button variant="outline" onClick={() => setCsLimit((n) => n + 7)}>
+              Ver mais
+            </Button>
+          </div>
+        ) : null}
       </Card>
 
-      {/* 4) VENCIMENTOS PRÓXIMOS */}
-      <Card title="Vencimentos nos próximos 30 dias" subtitle="Clique no cliente para abrir os dados.">
+      {/* 4) VENCIMENTOS (30 dias anteriores + 30 dias próximos) */}
+      <Card
+        title="Vencimentos (30 dias anteriores + 30 dias próximos)"
+        subtitle={`Janela: ${renewalWindow.from} → ${renewalWindow.to} • Atrasados destacados`}
+      >
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 mb-4">
-          <Stat label="Total em R$ a ser renovado (30 dias)" value={brl(totalToRenew30)} />
+          <Stat label="Total em R$ a ser renovado (próximos 30 dias)" value={brl(totalToRenew30)} />
           <Stat label="Total coletado em renovações" value={brl(totalCollectedRenewals)} />
         </div>
 
         {upcomingRenewals.length === 0 ? (
           <div className="rounded-3xl border border-slate-800 bg-slate-950/10 px-4 py-6 text-sm text-slate-500">
-            Nenhum vencimento nos próximos 30 dias.
+            Nenhum vencimento na janela (30 dias anteriores + 30 dias próximos).
           </div>
         ) : (
           <div className="space-y-3">
-            {upcomingRenewals.map((c: any) => (
-              <div
-                key={String(c.id)}
-                className="rounded-3xl border border-slate-800 bg-slate-950/20 px-4 py-4 hover:bg-slate-950/30 cursor-pointer"
-                onClick={() => openCustomerDetails(c)}
-                role="button"
-                tabIndex={0}
-              >
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="font-semibold truncate">{String(c.name ?? "")}</div>
-                    <div className="mt-1 text-xs text-slate-400">
-                      {String(c.product ?? c.active_product ?? "")}
-                      {c.phone ? ` • ${String(c.phone)}` : ""}
+            {upcomingRenewals.map((c: any) => {
+              const overdue = isOverdue(c.renewal_date);
+              return (
+                <div
+                  key={String(c.id)}
+                  className={[
+                    "rounded-3xl border px-4 py-4 hover:bg-slate-950/30 cursor-pointer",
+                    overdue
+                      ? "border-red-900/60 bg-red-950/20"
+                      : "border-slate-800 bg-slate-950/20",
+                  ].join(" ")}
+                  onClick={() => openCustomerDetails(c)}
+                  role="button"
+                  tabIndex={0}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-semibold truncate">{String(c.name ?? "")}</div>
+                      <div className="mt-1 text-xs text-slate-400">
+                        {String(c.product ?? c.active_product ?? "")}
+                        {c.phone ? ` • ${String(c.phone)}` : ""}
+                      </div>
+                    </div>
+
+                    <div className="flex shrink-0 items-center gap-2">
+                      {overdue ? <Pill>ATRASADO</Pill> : null}
+                      <Pill>Renova: {iso10(c.renewal_date)}</Pill>
+                      <Pill>{brl(safeNum(c.paid_value ?? 0))}</Pill>
                     </div>
                   </div>
-
-                  <div className="flex shrink-0 items-center gap-2">
-                    <Pill>Renova: {iso10(c.renewal_date)}</Pill>
-                    <Pill>{brl(safeNum(c.paid_value ?? 0))}</Pill>
-                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </Card>
@@ -819,7 +921,10 @@ const ltvByCustomer = useMemo(() => {
           <Stat label="Clientes cadastrados" value={String(csStats.total)} />
           <Stat label="Clientes ativos" value={`${csStats.active} (${csStats.pctActive.toFixed(1)}%)`} />
           <Stat label="Clientes que renovaram" value={`${csStats.renewed} (${csStats.pctRenewed.toFixed(1)}%)`} />
-          <Stat label="Clientes que não renovaram" value={`${csStats.notRenewed} (${csStats.pctNotRenewed.toFixed(1)}%)`} />
+          <Stat
+            label="Clientes que não renovaram"
+            value={`${csStats.notRenewed} (${csStats.pctNotRenewed.toFixed(1)}%)`}
+          />
         </div>
       </Card>
 
@@ -859,7 +964,9 @@ const ltvByCustomer = useMemo(() => {
 
             <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-4 py-3">
               <div className="text-xs text-slate-400">LTV</div>
-              <div className="text-sm font-semibold">{brl(safeNum(ltvByCustomer.get(String((viewCustomer as any)?.id)) ?? 0))}</div>
+              <div className="text-sm font-semibold">
+                {brl(safeNum(ltvByCustomer.get(String((viewCustomer as any)?.id)) ?? 0))}
+              </div>
             </div>
 
             <div className="rounded-3xl border border-slate-800 bg-slate-950/20 px-4 py-3 md:col-span-2">
