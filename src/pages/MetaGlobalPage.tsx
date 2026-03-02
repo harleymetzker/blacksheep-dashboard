@@ -268,35 +268,21 @@ export default function MetaGlobalPage() {
   }, [meetingsHeldYTD, noShowYTD]);
 
   // ====== RENEWALS ======
-  const renewalsMonthPct = useMemo(() => {
-    const dueCustomers = (customers ?? []).filter((c: any) => inRange(iso10(c.renewal_date), monthStart, monthEnd));
-    const dueIds = new Set(dueCustomers.map((c: any) => String(c.id)));
+// Mesma lógica da página Operações: % de clientes que já renovaram ao menos 1 vez
+const renewalsMonthPct = useMemo(() => {
+  const total = (customers ?? []).length;
+  if (total === 0) return 0;
 
-    const renewedIds = new Set<string>();
-    for (const r of renewals ?? []) {
-      const payDate = iso10((r as any).renewal_date);
-      if (!inRange(payDate, monthStart, monthEnd)) continue;
-      const cid = String((r as any).customer_id ?? "");
-      if (cid && dueIds.has(cid)) renewedIds.add(cid);
-    }
+  const renewedIds = new Set<string>();
+  for (const r of renewals ?? []) {
+    const cid = String((r as any).customer_id ?? "");
+    if (cid) renewedIds.add(cid);
+  }
 
-    return dueIds.size > 0 ? safeDiv(renewedIds.size * 100, dueIds.size) : 0;
-  }, [customers, renewals, monthStart, monthEnd]);
+  return safeDiv(renewedIds.size * 100, total);
+}, [customers, renewals]);
 
-  const renewalsYTDPct = useMemo(() => {
-    const dueCustomers = (customers ?? []).filter((c: any) => inRange(iso10(c.renewal_date), yearStart, ytdEnd));
-    const dueIds = new Set(dueCustomers.map((c: any) => String(c.id)));
-
-    const renewedIds = new Set<string>();
-    for (const r of renewals ?? []) {
-      const payDate = iso10((r as any).renewal_date);
-      if (!inRange(payDate, yearStart, ytdEnd)) continue;
-      const cid = String((r as any).customer_id ?? "");
-      if (cid && dueIds.has(cid)) renewedIds.add(cid);
-    }
-
-    return dueIds.size > 0 ? safeDiv(renewedIds.size * 100, dueIds.size) : 0;
-  }, [customers, renewals, yearStart, ytdEnd]);
+const renewalsYTDPct = renewalsMonthPct;
 
   // ====== ADS SPEND ======
   const spendByProfileMonth = useMemo(() => {
