@@ -17,7 +17,7 @@ const GOALS_2026 = {
   costPerSale: 1_000, // R$ 1.000
   showRatePct: 60, // 60%
   meetingsBookedMonthly: 80, // 80 reuniões / mês
-  renewalsPct: 70, // 70%
+  renewalsPct: 50, // 50%
 };
 
 function clampPct(n: number) {
