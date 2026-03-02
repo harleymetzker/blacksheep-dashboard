@@ -380,21 +380,28 @@ export default function FinancePage() {
 
             <div className="flex items-center gap-2">
               <Button
-                onClick={async () => {
-                  // se você não digitou nada, ele permite salvar o valor atual exibido
-                  const val = parseMoneyInput(bankBalanceInput || String(saldoInicial));
-                  await upsertBankBalance({
-                    day: range.start,
-                    balance: val,
-                    notes: "Saldo inicial (override do período)",
-                  });
-                  setBankBalanceInput("");
-                  await refreshBalances();
-                }}
-              >
-                Salvar saldo inicial
-              </Button>
+  onClick={async () => {
+    setError(null);
+    try {
+      const val = parseMoneyInput(bankBalanceInput || String(saldoInicial));
 
+      await upsertBankBalance({
+        id: uid(), // ✅ importante: evita erro se a tabela exigir id
+        day: range.start,
+        balance: val,
+        notes: "Saldo inicial (override do período)",
+      });
+
+      setBankBalanceInput("");
+      await refreshBalances();
+      await refresh(); // ✅ pra refletir saldo final/indicadores se você usa em outros lugares
+    } catch (e: any) {
+      setError(e?.message ?? "Erro ao salvar saldo inicial.");
+    }
+  }}
+>
+  Salvar saldo inicial
+</Button>
               {balanceDay === range.start ? (
                 <div className="text-xs text-slate-400">
                   Usando saldo do período (editável): <span className="font-semibold">{range.start}</span>
