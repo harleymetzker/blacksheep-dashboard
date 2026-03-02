@@ -160,7 +160,11 @@ export default function FinancePage() {
       const data = await listBankBalances();
 
       // 1) prioridade: saldo EXATO do início do período
-      const exact = (data ?? []).find((b: any) => String(b.start_date).slice(0, 10) === range.start);
+     const exact = (data ?? []).find(
+  (b: any) =>
+    String(b.start_date).slice(0, 10) === range.start &&
+    String(b.end_date).slice(0, 10) === range.end
+);
       if (exact) {
         setBalanceDay(range.start);
         setSaldoInicial(safeNumber(exact.balance));
@@ -174,7 +178,7 @@ const prior = (data ?? [])
   .filter((b: any) => new Date(b.start_date) < start)
   .slice()
   .sort((a: any, b: any) => String(b.start_date).localeCompare(String(a.start_date)))[0];
-
+      
       if (prior) {
         setBalanceDay(prior.start_date);
 setSaldoInicial(safeNumber(prior.balance));
@@ -391,7 +395,8 @@ setSaldoInicial(safeNumber(prior.balance));
 
       await upsertBankBalance({
         id: uid(),
-        start_date: range.start, // ✅ obrigatório no seu banco
+        start_date: range.start, // ✅ obrigatório
+        end_date: range.end,     // ✅ obrigatório
         balance: val,
         notes: "Saldo inicial (override do período)",
       });
