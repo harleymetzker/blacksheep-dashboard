@@ -412,7 +412,7 @@ export default function OpsPage() {
       category: ((it as any).category ?? "link") as ImportantCategory,
       title: (it as any).title ?? "",
       description: (it as any).description ?? "",
-      url: (it as any).url ?? "",
+      url: (it as any).link ?? "",
     });
     setOpenItemEdit(true);
   }
@@ -425,12 +425,12 @@ export default function OpsPage() {
         category: itemForm.category,
         title: itemForm.title.trim(),
         description: itemForm.description.trim() || null,
-        url: itemForm.url.trim(),
+        link: itemForm.url.trim(),
       };
 
       if (!payload.title) return setErr("Título é obrigatório.");
-      if (!payload.url) return setErr("Link é obrigatório.");
-      if (!isValidUrl(payload.url)) return setErr("Link inválido. Use http:// ou https://");
+      if (!(payload as any).link) return setErr("Link é obrigatório.");
+if (!isValidUrl(String((payload as any).link))) return setErr("Link inválido. Use http:// ou https://");
 
       await upsertOpsImportantItem(payload);
       setOpenItemEdit(false);
@@ -656,7 +656,7 @@ export default function OpsPage() {
 
             <div className="mt-3">
               <a
-                href={(it as any).url}
+                href={(it as any).link}
                 target="_blank"
                 rel="noreferrer"
                 className="text-sm text-slate-200 underline underline-offset-4"
